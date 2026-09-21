@@ -1,0 +1,396 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Recreating Jev from next-token probabilities</title>
+<meta name="description" content="How far can you get rebuilding a calibrated decision API using only the next-token probabilities of a local language model?" />
+<link rel="stylesheet" href="site.css" />
+</head>
+<body>
+<main>
+  <header class="hero">
+    <p class="kicker">Notes from a rebuild</p>
+    <h1>Recreating Jev from next-token probabilities</h1>
+    <p class="lead">
+      When I first came across <a href="https://typesafe.ai/">Jev</a>, the
+      flagship model from <a href="https://typesafe.ai/">Typesafe</a>, I was
+      intrigued. A model that takes an arbitrary state and a handful of choices, and
+      returns a decision with a confidence score you're actually supposed to trust? My
+      second thought was less generous: there's no way that works. The architecture
+      isn't published, so I did the only sensible thing: tried to build it myself and
+      see how far I'd get.
+    </p>
+  </header>
+
+  <figure class="screenshot">
+    <a class="zoom" href="img/ui-mixed-result.png" aria-label="View screenshot full size"><img src="img/ui-mixed-result.png" alt="The local web UI after running a mixed (noul + score + choice) classify call on the payouts support-ticket example." /></a>
+    <figcaption class="cap">
+      The web UI this project ships (<code>zero-shot-serve</code>): a JSON editor for the
+      state and questions on the left, results on the right. This run mixed all three
+      question types in one call.
+    </figcaption>
+  </figure>
+
+  <section>
+    <h2>First instinct: rank by next-token probability</h2>
+    <p>
+      A language model is, at its core, a next-word probability machine. So the obvious
+      approach is to hand it a prompt, look at the probability of each candidate
+      answer as the next token(s), and rank them.
+    </p>
+    <p>
+      If the choices are <span class="mono">billing</span>,
+      <span class="mono">technical</span> and <span class="mono">sales</span>, read
+      the model's probability for each as the continuation, normalise, and you have a
+      classifier. No training required. That <em>should</em> work.
+    </p>
+  </section>
+
+  <section>
+    <h2>A test that changed the approach</h2>
+    <p>
+      Before writing any code, I poked at the Jev playground with an obviously loaded
+      example: a marriage proposal.
+    </p>
+    <div class="examples">
+      <pre class="block"><code>{
+  "response": {
+    "type": "choice",
+    "instructions": "What is the likely response?",
+    "criteria": {
+      "Yes": "Yes",
+      "Yes I do!": "Yes I do!"
+    }
+  }
+}</code></pre>
+      <pre class="block"><code>{
+  "input": "Will you marry me!"
+}</code></pre>
+    </div>
+    <p>
+      My gut said <span class="mono">Yes I do!</span>, which is how it's written in
+      books and said in the movies. So I expected that one to come out on top.
+    </p>
+    <p>
+      But the probability maths said the opposite. <span class="mono">Yes</span> is a
+      prefix of <span class="mono">Yes I do!</span>, so the longer answer is just the
+      shorter one with another phrase stuck on:
+    </p>
+    <p class="formula">
+      P("Yes I do!") = P("Yes") &times; P(" I do!" | "Yes") &le; P("Yes")
+    </p>
+    <p>
+      A pure product-of-token-probabilities ranker would therefore pick the short
+      <span class="mono">Yes</span>. Yet the playground favoured the longer, complete
+      answer.
+    </p>
+    <p>
+      That was the clue: the score wasn't just the probability of the tokens. It had to
+      include the probability that the answer <em>stops</em>: the EOS token.
+      <span class="mono">Yes</span> is an unfinished sentence, and the model keeps a lot
+      of mass on continuing it, while <span class="mono">Yes I do!</span> is complete
+      and likely to end. So the method became:
+    </p>
+    <p class="formula">
+      log&nbsp;P(option) = &Sigma;<sub>i</sub> log&nbsp;P(token<sub>i</sub> | prompt) + log&nbsp;P(EOS | prompt, option)
+    </p>
+    <p>
+      Score every option that way, then normalise across options. EOS is what makes
+      "completeness" count.
+    </p>
+    <figure class="screenshot">
+      <a class="zoom" href="img/ui-marriage-proposal.png" aria-label="View screenshot full size"><img src="img/ui-marriage-proposal.png" alt="The web UI after running the marriage-proposal example: 'Yes I do!' wins 98.8% over 'Yes' 1.2%." /></a>
+      <figcaption class="cap">
+        Running the marriage-proposal example locally reproduces the playground's
+        behaviour: <strong>Yes I do!</strong> at 98.8%, <strong>Yes</strong> at 1.2%.
+        The longer answer wins because the model is much more likely to emit EOS after
+        a complete phrase than to keep going after a single word.
+      </figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>Why the usual APIs can't do this</h2>
+    <p>Getting the full next-token distribution is not something hosted providers expose:</p>
+    <ul>
+      <li>
+        They return logprobs only for tokens the model <em>generated</em>, and only the
+        top-k (often &le; 20). That shows what the model chose, not the probability of
+        an arbitrary candidate you want to score.
+      </li>
+      <li>
+        Many disallow it on purpose (anti-distillation), and reasoning models often
+        disable logprobs entirely.
+      </li>
+      <li>
+        Even where logprobs exist, tokens outside the top-k have no exact value, and
+        EOS is usually hidden precisely when the model actually stops.
+      </li>
+    </ul>
+    <p>
+      I had Ollama locally, so I tried that next. Same wall: <span class="mono">top_logprobs</span>
+      is capped at 20, and there's no EOS probability when it matters. So I dropped the
+      API route and downloaded the model weights directly, running a forward pass with
+      <span class="mono">transformers</span> to read the full-vocabulary logits.
+    </p>
+  </section>
+
+  <section>
+    <h2>Choosing a model</h2>
+    <p>I tried a few, and learned that architecture matters more than parameter count here:</p>
+    <ul>
+      <li><strong>Gemma 4 E2B</strong>: worked, but its text weights live under a different key prefix and it had KV-sharing quirks that made loading and scoring awkward.</li>
+      <li><strong>Qwen3.5 4B</strong>: hybrid linear attention; without special CUDA kernels it fell back to slow reference implementations.</li>
+      <li><strong>Qwen3-4B-Instruct-2507</strong>: a standard dense transformer. No kernel surprises, predictable latency, and much better at the task.</li>
+    </ul>
+    <p>
+      A note on speed. For the apple-colour example above, Jev reports ~113 ms of
+      classification plus ~229 ms of network latency, so total round-trip is about
+      <strong>342 ms</strong>. The local server on an RTX 5060 Ti handles the same
+      call in about <strong>360 ms</strong> end-to-end: classification is roughly 3x
+      slower than Jev's, and with the network round-trip added back in wall-clock is
+      similar.
+    </p>
+  </section>
+
+  <section>
+    <h2>Making it fast: the KV cache</h2>
+    <p>
+      Scoring <em>N</em> options normally means <em>N</em> forward passes, each
+      re-processing the identical prompt. That's wasteful: the context and task are the
+      same, only the option continuation changes.
+    </p>
+    <p>
+      A transformer caches the attention keys and values of the tokens it has already
+      processed. So we prefill the shared prompt once, keep that cache, and for each
+      option only run the few new tokens against it. That's roughly
+      <strong>3-4&times; faster</strong>.
+    </p>
+    <p>
+      It isn't a free lunch: reusing the cache changes the shape of the attention math,
+      so near-tie tokens can shift a little. On a 100-example run it didn't change a
+      single top-1 prediction, and the exact path is always available if you turn it off.
+    </p>
+  </section>
+
+  <section>
+    <h2>Normalisation: removing the model's own preferences</h2>
+    <p>
+      Raw token likelihood has a bias problem. Some options are simply more likely
+      strings: <span class="mono">sales</span> is a common token, <span class="mono">1</span>
+      is a common digit. They win partly for the wrong reasons.
+    </p>
+    <p>
+      The fix is <strong>contextual calibration</strong>: score every option twice,
+      once with the real context and once with a content-free context like
+      <span class="mono">"N/A"</span>, and subtract the second from the first.
+    </p>
+    <p class="formula">
+      score(option) = log&nbsp;P(option | context) &minus; log&nbsp;P(option | "N/A")
+    </p>
+    <div class="examples">
+      <pre class="block"><code>{
+  "department": {
+    "type": "choice",
+    "instructions": "Which team should handle this?",
+    "criteria": {
+      "billing": "Payments, invoicing, refunds",
+      "technical": "Bugs, outages, integrations",
+      "sales": "Pricing, upgrades, new accounts"
+    }
+  }
+}</code></pre>
+      <pre class="block"><code>{
+  "input": "Help! My payouts have been failing for 3 days."
+}</code></pre>
+    </div>
+    <p>
+      Without calibration, <span class="mono">sales</span> wins this call simply
+      because it is a more frequent token than <span class="mono">billing</span> or
+      <span class="mono">technical</span>. The context points clearly at payments but
+      the surface-form prior overrides it. Subtracting the content-free prior flips
+      the answer to the one the context actually supports.
+    </p>
+    <table class="calib">
+      <thead>
+        <tr><th>option</th><th>uncalibrated</th><th>calibrated</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><span class="mono">billing</span></td><td>48%</td><td><strong>96%</strong></td></tr>
+        <tr><td><span class="mono">sales</span></td><td><strong>50%</strong></td><td>2%</td></tr>
+        <tr><td><span class="mono">technical</span></td><td>2%</td><td>1%</td></tr>
+      </tbody>
+    </table>
+    <p>
+      Finally, a softmax (with an optional temperature) turns the scores into a clean
+      distribution over options. It's worth separating two things that both get called
+      "calibration": removing <em>option bias</em> (this), and making the confidence match
+      real-world <em>accuracy</em> (below).
+    </p>
+    <p class="note">
+      Based on "Calibrate Before Use" by
+      <a href="https://arxiv.org/abs/2102.09690">Zhao et al.</a>
+    </p>
+  </section>
+
+  <section>
+    <h2>What this doesn't do</h2>
+    <p>
+      The output is still a likelihood, not a calibrated accuracy. A "90%" here does not
+      mean "correct 90% of the time". Making that true is the hard part that
+      Typesafe's training recipe for Jev (RL for calibrated decisions) targets, and
+      the main thing a from-scratch reconstruction like this cannot replicate.
+    </p>
+  </section>
+
+  <section>
+    <h2>Quirks I still can't explain</h2>
+    <p>One case I could not reproduce: the colour of a fruit.</p>
+    <div class="examples">
+      <pre class="block"><code>{
+  "color": {
+    "type": "choice",
+    "instructions": "What color is the fruit?",
+    "criteria": {
+      "red": "",
+      "green": "",
+      "yellow": ""
+    }
+  }
+}</code></pre>
+      <pre class="block"><code>{
+  "input": "This apple is so sour and crisp and delicious! It is a lovely shade of"
+}</code></pre>
+    </div>
+    <p>
+      It is a genuinely ambiguous case. "Sour" pulls toward green (think Granny
+      Smith), "apple" pulls toward red, and "shade of" primes a colour in general. On
+      Jev the answer was not consistent between runs. I could not reproduce that
+      variability here, and I am not sure where I would even start looking. It could be
+      sampling, batching, or something in how they read the distribution entirely.
+      Either way, it is a good reminder that one ambiguous input is a terrible way to
+      judge a classifier.
+    </p>
+    <figure class="screenshot two-up">
+      <div class="pair">
+        <a class="zoom" href="img/typesafe_playground_green.png" aria-label="View screenshot full size"><img src="img/typesafe_playground_green.png" alt="TypeSafe playground: same apple-colour input, run 1, answer green 58% / red 39% / yellow 3%, confidence 37%." /></a>
+        <a class="zoom" href="img/typesafe_playground_red.png" aria-label="View screenshot full size"><img src="img/typesafe_playground_red.png" alt="TypeSafe playground: same apple-colour input, run 2, answer red 61% / green 38% / yellow 1%, confidence 41%." /></a>
+      </div>
+      <figcaption class="cap">
+        Two runs of the same prompt on the Jev playground, seconds apart:
+        <strong>green</strong> 58% one moment, <strong>red</strong> 61% the next. The
+        probabilities don't even stay close between runs. (Granted, I took the worst
+        possible results here; most of the time they hovered around the 50% range for
+        one colour, 49% the other, and 1% for yellow.)
+      </figcaption>
+    </figure>
+  </section>
+
+  <section>
+    <h2>A toy version of the real thing</h2>
+    <p>
+      This is an impersonation of Jev's API: the same input shape (state plus typed
+      questions) and the same answer shape (typed choices with probabilities and
+      confidence). Jev has not published how their system actually works, so the
+      internals here are a guess, not a copy: read the next-token distribution,
+      include EOS, calibrate away option bias, softmax. That is one plausible way to
+      produce this kind of output, but it is explicitly not a claim about how Jev
+      does it. The logic is deliberately simple and the model is off the shelf.
+    </p>
+    <h3>One known quirk: the order of the criteria list</h3>
+    <p>
+      For <span class="mono">choice</span> questions the prompt includes a
+      <span class="mono"># CRITERIA</span> block listing each key with its description, so the
+      model sees what each option means before it scores the key as a continuation. The
+      order in which the criteria are listed can still prime the model.
+    </p>
+    <p>
+      Measured on Qwen3-4B with the payouts example (state: <em>"Help! My payouts have
+      been failing for 3 days."</em>, <span class="mono">criteria</span> for
+      <span class="mono">department</span>):
+    </p>
+    <table class="calib">
+      <thead>
+        <tr><th>option</th><th>order A<br/><span class="mono">billing, technical, sales</span></th><th>order B<br/><span class="mono">sales, technical, billing</span></th><th>Δ</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><span class="mono">billing</span></td><td>+1.25</td><td>+3.91</td><td>+2.67</td></tr>
+        <tr><td><span class="mono">technical</span></td><td>-3.05</td><td>+1.31</td><td>+4.36</td></tr>
+        <tr><td><span class="mono">sales</span></td><td>-12.50</td><td>-14.89</td><td>-2.39</td></tr>
+      </tbody>
+    </table>
+    <p>
+      The winner is still <span class="mono">billing</span> in both orderings, but
+      <span class="mono">technical</span> flips sign on its calibrated score, and
+      <span class="mono">confidence</span> drifts from 0.97 to 0.87. Take note if you are
+      near the decision boundary.
+    </p>
+    <figure class="screenshot">
+      <a class="zoom" href="img/ui-detail-modal.png" aria-label="View screenshot full size"><img src="img/ui-detail-modal.png" alt="Detail modal for a choice question, showing per-option bars, log-probabilities, and the token-level probabilities table for the top option." /></a>
+      <figcaption class="cap">
+        Click any row to see the per-option breakdown: calibrated log-probabilities,
+        token-level probabilities (including the EOS row), and the resulting softmax.
+        The request timing the modal shows is server-side only, reported via
+        <code>usage.timing_ms</code>.
+      </figcaption>
+    </figure>
+    <p>
+      A real service almost certainly has far more going on: purpose-built training
+      (the "RL for calibrated decisions" Typesafe describes), tuned serving, and a
+      lot of evaluation I have no visibility into. So read this as a way to
+      understand the idea by rebuilding a rough version of it, not as a claim about
+      how Jev works under the hood.
+    </p>
+  </section>
+
+  <footer>
+    <p>
+      A local, from-scratch copy of <a href="https://typesafe.ai/">Jev</a>, built
+      with local LLMs and the Hugging Face <span class="mono">transformers</span>
+      library to recreate the same kind of calibrated decisions.
+    </p>
+  </footer>
+</main>
+
+<div id="lightbox" class="lightbox" hidden role="dialog" aria-modal="true" aria-label="Screenshot viewer">
+  <button class="close" type="button" aria-label="Close">×</button>
+  <img class="frame" alt="" />
+</div>
+
+<script>
+  (function () {
+    var lb = document.getElementById("lightbox");
+    var img = lb.querySelector("img");
+    var triggers = document.querySelectorAll("a.zoom");
+
+    function open(src, alt) {
+      img.src = src;
+      img.alt = alt || "";
+      lb.hidden = false;
+      document.body.style.overflow = "hidden";
+    }
+    function close() {
+      lb.hidden = true;
+      img.src = "";
+      img.alt = "";
+      document.body.style.overflow = "";
+    }
+
+    triggers.forEach(function (a) {
+      a.addEventListener("click", function (e) {
+        e.preventDefault();
+        var t = a.querySelector("img");
+        open(a.getAttribute("href"), t ? t.alt : "");
+      });
+    });
+    lb.addEventListener("click", function (e) {
+      if (e.target === lb || e.target === img || e.target.classList.contains("close")) close();
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && !lb.hidden) close();
+    });
+  })();
+</script>
+</body>
+</html>
