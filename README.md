@@ -1,8 +1,11 @@
 # zero-shot
 
-A local, from-scratch recreation of [Jev](https://typesafe.ai/), Typesafe's
-flagship model: a server that turns an arbitrary "state" plus a set of choices into
-a decision with real probabilities, no training required.
+A local, from-scratch recreation of the [Jev](https://typesafe.ai/) decision
+API: a server that turns an arbitrary "state" plus a set of choices into a
+decision with real probabilities, no training required.
+
+Read more about the thought process behind it
+[here](https://yushenggg.github.io/zero-shot-classifier/).
 
 ## Setup
 
