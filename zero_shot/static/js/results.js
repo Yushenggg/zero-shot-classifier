@@ -2,6 +2,13 @@
 
 import { el } from "./dom.js";
 
+function formatMs(ms) {
+  if (ms == null) return null;
+  if (ms < 1) return ms.toFixed(2) + " ms";
+  if (ms < 10) return ms.toFixed(1) + " ms";
+  return Math.round(ms) + " ms";
+}
+
 function tokenTable(score) {
   const table = el("table", "pt");
   const headRow = el("tr");
@@ -98,9 +105,12 @@ export function renderResults(data, questionMap) {
   thead.appendChild(headRow);
   const tbody = el("tbody");
 
+  const usage = data.usage || {};
+  const timing = formatMs(usage.timing_ms);
+
   for (const r of data.results) {
     const tr = el("tr");
-    tr.addEventListener("click", () => openModal(r, questionMap));
+    tr.addEventListener("click", () => openModal(r, questionMap, timing));
 
     const qcell = el("td", "q");
     qcell.appendChild(el("div", "qname", r.name));
@@ -121,7 +131,7 @@ export function renderResults(data, questionMap) {
   return table;
 }
 
-function openModal(r, questionMap) {
+function openModal(r, questionMap, timing) {
   const modal = document.getElementById("modal");
   const body = document.getElementById("modalBody");
   body.innerHTML = "";
@@ -144,6 +154,10 @@ function openModal(r, questionMap) {
     headline += "     confidence: " + r.confidence.toFixed(3);
   }
   body.appendChild(el("div", "choice", headline));
+
+  if (timing) {
+    body.appendChild(el("div", "opt-meta", "request timing: " + timing));
+  }
 
   if (r.legend) {
     body.appendChild(el("div", "tick", Object.entries(r.legend).map(([k, v]) => k + ": " + v).join("   ")));

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -87,6 +88,7 @@ def classify_endpoint(request: ClassifyRequest) -> JSONResponse:
         return JSONResponse(status_code=422, content={"error": "`questions` is required"})
 
     model_id = request.model or CONFIG.model
+    started = time.perf_counter()
     try:
         results = classify(
             questions,
@@ -102,11 +104,13 @@ def classify_endpoint(request: ClassifyRequest) -> JSONResponse:
         )
     except (ValueError, RuntimeError) as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
+    elapsed_ms = (time.perf_counter() - started) * 1000
 
     answers = {r.name: r.to_dict() for r in results}
     usage = {
         "input_tokens": sum(r.input_tokens for r in results),
         "output_tokens": sum(r.output_tokens for r in results),
+        "timing_ms": elapsed_ms,
     }
     return JSONResponse(
         content={

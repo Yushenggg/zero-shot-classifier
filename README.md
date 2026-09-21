@@ -1,42 +1,8 @@
 # zero-shot
 
-Inspired by [jev.ai](https://jev.ai) and its ability to turn an arbitrary "state"
-plus a set of choices into a decision with real probabilities, no training
-required. See [docs/context.md](docs/context.md) for the design narrative and the
-reasoning behind the current shape of the project.
-
-## How it works (roughly)
-
-1. Build a prompt from the state (arbitrary JSON context) and the task
-   instructions, ending right at the decision point.
-2. Run a forward pass with a local Hugging Face model (Qwen3-4B-Instruct-2507 by
-   default) and read the next-token distribution from the full-vocabulary logits.
-3. For each option, score its exact continuation token-by-token, plus the EOS
-   token, giving `log P(option)`.
-4. Softmax those scores into probabilities and pick the highest.
-
-Including EOS is what lets a longer but more complete answer win over a short one.
-
-## Question types
-
-`question` is a map of named, typed questions (all three types can be mixed in one
-call):
-
-- **`choice`** — pick one option. `criteria` is a map of `option → rubric`.
-- **`noul`** — yes/no. Returns the probability of "yes" (`noul`). `criteria`
-  (`{"true": ..., "false": ...}`) is optional.
-- **`score`** — rate on an ordered scale. `criteria` is an ordered array of 2–10
-  level descriptions. Returns `score` (a probability-weighted value that can land
-  between levels), the per-level `probabilities`, and a `legend`.
-
-Candidate keys are scored directly; they are **not** enumerated in the prompt (only
-the `score` rating scale is shown). `instructions` and `state` may be plain strings
-or structured objects/arrays (rendered as JSON in the prompt). `choice` and `score`
-answers also include a `confidence` (the sum of squared probabilities).
-
-Examples: [examples/payouts_questions.json](examples/payouts_questions.json) (all
-three types) with [examples/payouts_state.json](examples/payouts_state.json), and
-the apple example in [examples/color_question.json](examples/color_question.json).
+A local, from-scratch recreation of [Jev](https://typesafe.ai/), Typesafe's
+flagship model: a server that turns an arbitrary "state" plus a set of choices into
+a decision with real probabilities, no training required.
 
 ## Setup
 
