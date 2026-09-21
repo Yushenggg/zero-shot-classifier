@@ -140,6 +140,19 @@ Returns `{"model": ..., "answers": { "<id>": <answer> }, "results": [ ... ], "us
 is loaded from (or downloaded into) a sibling directory under `models/`.
 `GET /api/health` reports the configured model and device.
 
+### Web UI
+
+Besides the CLI and the HTTP API, the server ships a browser UI: build a request
+from the example templates (or paste your own JSON), run it, and inspect the
+result — per-option probabilities, log-probabilities, and the token-level tables.
+Start the server and open http://127.0.0.1:8000:
+
+```bash
+.venv/bin/zero-shot-serve
+```
+
+![The local web UI after a mixed noul + score + choice call on the payouts example](docs/img/ui-mixed-result.png)
+
 ## Docker
 
 A `Dockerfile` and `docker-compose.yml` are included. The standard service runs
@@ -157,6 +170,19 @@ The CPU image is the portable option: it has no CUDA, driver, or toolkit
 dependencies, so it should build and run on essentially any machine Docker supports
 (amd64 or arm64, Linux or Docker Desktop on macOS/Windows) with no GPU and no model
 download. The trade-off is reasoning quality — SmolLM2-360M is an extremely small model
+
+### Prebuilt image
+
+A prebuilt CPU image is published on Docker Hub, so you can skip the build
+entirely:
+
+```bash
+docker pull yushenggg/zero-shot:cpu
+docker run -p 8000:8000 yushenggg/zero-shot:cpu    # http://127.0.0.1:8000
+```
+
+Mount `./models` and `config.smollm.toml` the same way `docker-compose.yml` does if
+you want the weights to persist across container recreation.
 
 ### GPU
 
