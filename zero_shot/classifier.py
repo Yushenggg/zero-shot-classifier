@@ -106,7 +106,10 @@ def classify_one(
     *,
     model_id: str = DEFAULT_MODEL_ID,
     save_to: str | None = None,
+    device: str = "cpu",
+    gpu: str | None = None,
     temperature: float = 1.0,
+    use_kv_cache: bool = False,
 ) -> Classification:
     if spec.get("type") != "choice":
         raise ValueError(f"Question '{name}' must have type 'choice', got {spec.get('type')!r}")
@@ -115,8 +118,10 @@ def classify_one(
         raise ValueError(f"Question '{name}' has no criteria")
 
     prompt = _build_prompt(name, spec, state)
-    scorer = get_scorer(model_id, save_to=save_to)
-    sequence_scores = scorer.score_options(prompt, list(criteria.keys()))
+    scorer = get_scorer(model_id, save_to=save_to, device=device, gpu=gpu)
+    sequence_scores = scorer.score_options(
+        prompt, list(criteria.keys()), use_kv_cache=use_kv_cache
+    )
     scores = score_options(criteria, sequence_scores, temperature=temperature)
 
     ranked = [s for s in scores if s.logprob is not None]
@@ -131,7 +136,10 @@ def classify(
     *,
     model_id: str = DEFAULT_MODEL_ID,
     save_to: str | None = None,
+    device: str = "cpu",
+    gpu: str | None = None,
     temperature: float = 1.0,
+    use_kv_cache: bool = False,
 ) -> list[Classification]:
     """Classify `state` against every choice question in `question`.
 
@@ -143,7 +151,15 @@ def classify(
         raise ValueError("question must be a non-empty JSON object")
     return [
         classify_one(
-            name, spec, state, model_id=model_id, save_to=save_to, temperature=temperature
+            name,
+            spec,
+            state,
+            model_id=model_id,
+            save_to=save_to,
+            device=device,
+            gpu=gpu,
+            temperature=temperature,
+            use_kv_cache=use_kv_cache,
         )
         for name, spec in question.items()
     ]

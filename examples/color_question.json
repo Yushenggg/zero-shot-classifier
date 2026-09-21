@@ -1,0 +1,11 @@
+{
+  "color": {
+    "type": "choice",
+    "instructions": "What color is the fruit?",
+    "criteria": {
+      "red": "",
+      "green": "",
+      "yellow": ""
+    }
+  }
+}

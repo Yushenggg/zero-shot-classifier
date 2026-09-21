@@ -1,0 +1,10 @@
+# CUDA build of PyTorch for NVIDIA GeForce RTX 5060 Ti (Blackwell, sm_120, CUDA 13).
+# PyPI's default Linux torch wheel is the CUDA 13 build.
+#
+#   uv pip install --reinstall -r requirements-gpu.txt
+#
+# (--reinstall is required: "torch==2.14.0" is otherwise considered already
+#  satisfied by the installed CPU build, since local version tags are ignored.)
+#
+--index-url https://pypi.org/simple
+torch==2.14.0

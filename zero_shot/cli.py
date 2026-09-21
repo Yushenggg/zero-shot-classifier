@@ -74,10 +74,33 @@ def main(argv: list[str] | None = None) -> int:
         help="Directory to download/cache the model. Overrides the config file.",
     )
     parser.add_argument(
+        "--device",
+        default=None,
+        help="Compute device: 'cpu' (default) or 'gpu'/'cuda'. Overrides the config file.",
+    )
+    parser.add_argument(
+        "--gpu",
+        default=None,
+        help="GPU id (e.g. rtx_5060_ti) used to validate GPU mode. Overrides the config file.",
+    )
+    parser.add_argument(
         "--temperature",
         type=float,
         default=1.0,
         help="Softmax temperature over the options; <1 sharpens, >1 smooths (default 1.0).",
+    )
+    parser.add_argument(
+        "--kv-cache",
+        dest="kv_cache",
+        action="store_true",
+        default=None,
+        help="Reuse one KV cache for the shared prompt (default; ~4x faster).",
+    )
+    parser.add_argument(
+        "--no-kv-cache",
+        dest="kv_cache",
+        action="store_false",
+        help="Disable KV-cache reuse and use the exact full-sequence path.",
     )
     parser.add_argument("--show-prompt", action="store_true", help="Print the prompt sent to the model.")
     parser.add_argument("--json", action="store_true", help="Emit structured JSON instead of a table.")
@@ -89,13 +112,23 @@ def main(argv: list[str] | None = None) -> int:
     config = load_config(args.config)
     model_id = args.model_id or config.model
     save_to = config.resolve_save_to(args.save_to)
+    device = args.device or config.device
+    gpu = args.gpu or config.gpu
+    use_kv_cache = config.kv_cache if args.kv_cache is None else args.kv_cache
 
     question = _load_json(args.question, "Question")
     state = _load_json(args.state, "State")
 
     try:
         results = classify(
-            question, state, model_id=model_id, save_to=save_to, temperature=args.temperature
+            question,
+            state,
+            model_id=model_id,
+            save_to=save_to,
+            device=device,
+            gpu=gpu,
+            temperature=args.temperature,
+            use_kv_cache=use_kv_cache,
         )
     except (ValueError, RuntimeError) as exc:
         print(f"error: {exc}", file=sys.stderr)

@@ -3,6 +3,8 @@ name = "zero-shot"
 version = "0.1.0"
 description = "Zero-shot choice classifier using the full next-token distribution of a local Gemma model"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.11"
 dependencies = [
     "accelerate>=1.15.0",
@@ -25,6 +27,11 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["zero_shot"]
 
+# Default install uses the smaller CPU-only PyTorch wheel.
+# For GPU (CUDA), install the CUDA build instead:
+#   uv pip install --reinstall -r requirements-gpu.txt
+# For CPU explicitly:
+#   uv pip install --reinstall -r requirements-cpu.txt
 [[tool.uv.index]]
 name = "pytorch-cpu"
 url = "https://download.pytorch.org/whl/cpu"

@@ -42,6 +42,10 @@
     width: 100%; background: var(--panel-2); color: var(--text);
     border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 13px;
   }
+  .model-id {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;
+    padding: 10px 0; word-break: break-all; color: var(--text);
+  }
   button {
     background: var(--accent); color: #04263a; border: 0; border-radius: 8px;
     padding: 11px 22px; font-size: 14px; font-weight: 600; cursor: pointer;
@@ -85,8 +89,8 @@
 
   <section class="panel controls">
     <div>
-      <label for="modelId">HF model id</label>
-      <input type="text" id="modelId" value="google/gemma-4-E2B-it" />
+      <label>Model (from config.toml)</label>
+      <div id="modelId" class="model-id">…</div>
     </div>
     <div>
       <label for="temperature">Softmax temp</label>
@@ -126,15 +130,16 @@ const output = document.getElementById("output");
 const runBtn = document.getElementById("run");
 
 async function checkHealth() {
-  const modelId = document.getElementById("modelId").value.trim();
   dot.className = "dot";
   statusText.textContent = "checking model…";
   try {
-    const res = await fetch("/api/health?model_id=" + encodeURIComponent(modelId));
+    const res = await fetch("/api/health");
     const data = await res.json();
     if (data.ok) {
+      document.getElementById("modelId").textContent = data.model_id;
       dot.className = "dot ok";
-      statusText.textContent = data.model_loaded ? "model loaded" : "model will load on first run";
+      const dev = data.device + (data.device !== "cpu" ? " / " + data.gpu : "");
+      statusText.textContent = (data.model_loaded ? "model loaded" : "loading on first run") + " · " + dev;
     } else {
       dot.className = "dot err";
       statusText.textContent = "unavailable";
@@ -234,7 +239,6 @@ runBtn.addEventListener("click", async () => {
       body: JSON.stringify({
         question,
         state,
-        model_id: document.getElementById("modelId").value.trim() || "google/gemma-4-E2B-it",
         temperature: parseFloat(document.getElementById("temperature").value) || 1.0,
       }),
     });

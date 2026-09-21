@@ -1,0 +1,10 @@
+# CPU-only PyTorch (project default). Smaller download, no CUDA.
+#
+#   uv pip install --reinstall -r requirements-cpu.txt
+#
+# (--reinstall is required: "torch==2.14.0" is otherwise considered satisfied
+#  by the installed CUDA build, since local version tags are ignored.)
+#
+--index-url https://download.pytorch.org/whl/cpu
+--extra-index-url https://pypi.org/simple
+torch==2.14.0+cpu
