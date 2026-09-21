@@ -1,0 +1,14 @@
+.git
+.gitignore
+.venv
+models
+docs
+examples
+
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*.egg-info/
+
+*.log
+uv.lock

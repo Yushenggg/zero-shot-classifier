@@ -117,6 +117,42 @@ Returns `{"model": ..., "answers": { "<id>": <answer> }, "results": [ ... ], "us
 is loaded from (or downloaded into) a sibling directory under `models/`.
 `GET /api/health` reports the configured model and device.
 
+## Docker
+
+A `Dockerfile` and `docker-compose.yml` are included. The standard service runs
+**CPU + SmolLM2-360M-Instruct** and serves the same web UI:
+
+```bash
+docker compose up --build        # http://127.0.0.1:8000
+```
+
+Model weights are bind-mounted from `./models`, so they persist across rebuilds and
+are never re-downloaded. The service mounts `config.smollm.toml` read-only and points
+`ZERO_SHOT_CONFIG` at it, so config edits apply without a rebuild.
+
+The CPU image is the portable option: it has no CUDA, driver, or toolkit
+dependencies, so it should build and run on essentially any machine Docker supports
+(amd64 or arm64, Linux or Docker Desktop on macOS/Windows) with no GPU and no model
+download. The trade-off is reasoning quality — SmolLM2-360M is an extremely small model
+
+### GPU
+
+The GPU service (CUDA + `config.toml`, i.e. Qwen3-4B) is **commented out** in
+`docker-compose.yml`: building it downloads the CUDA PyTorch wheels plus several GB
+of NVIDIA/CUDA packages. To use it, uncomment the `zero-shot-gpu` service and run:
+
+```bash
+docker compose --profile gpu up --build zero-shot-gpu   # http://127.0.0.1:8001
+```
+
+This requires the NVIDIA Container Toolkit on the host (`nvidia-ctk runtime configure
+--runtime=docker`, then restart Docker) and a driver supporting CUDA 13 / Blackwell
+`sm_120`.
+
+Inside the container the server binds `0.0.0.0` (set by the image); override with
+`ZERO_SHOT_HOST` / `ZERO_SHOT_PORT`. Outside Docker it still defaults to
+`127.0.0.1:8000`.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).

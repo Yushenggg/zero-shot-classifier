@@ -1,0 +1,54 @@
+# Standard service: CPU + SmolLM2-360M-Instruct.
+#   docker compose up --build
+#
+# Model weights live in the bind-mounted ./models directory, so they persist
+# across rebuilds. The config file is mounted read-only so the container always
+# sees your local edits without a rebuild.
+#
+# A GPU service (CUDA + Qwen3-4B-Instruct-2507) is provided but commented out:
+# building it pulls the CUDA PyTorch wheels plus the ~GB of NVIDIA/CUDA deps, so
+# it is opt-in. To use it, uncomment the `zero-shot-gpu` service below and run
+# (requires the NVIDIA Container Toolkit on the host):
+#   docker compose --profile gpu up --build zero-shot-gpu
+services:
+  zero-shot:
+    build:
+      context: .
+      args:
+        TORCH_BACKEND: cpu
+    image: zero-shot:cpu
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./models:/app/models
+      - ./config.smollm.toml:/app/config.smollm.toml:ro
+    environment:
+      ZERO_SHOT_CONFIG: /app/config.smollm.toml
+    restart: unless-stopped
+
+  # GPU service: CUDA + the default Qwen3-4B-Instruct-2507 config.
+  # Uncomment to enable; build with `--build-arg TORCH_BACKEND=cu130`.
+  # zero-shot-gpu:
+  #   profiles: ["gpu"]
+  #   build:
+  #     context: .
+  #     args:
+  #       TORCH_BACKEND: cu130
+  #   image: zero-shot:gpu
+  #   ports:
+  #     - "8001:8000"
+  #   volumes:
+  #     - ./models:/app/models
+  #     - ./config.toml:/app/config.toml:ro
+  #   environment:
+  #     ZERO_SHOT_CONFIG: /app/config.toml
+  #   # Requires the NVIDIA Container Toolkit on the host (nvidia-ctk runtime
+  #   # configure --runtime=docker). Verifies the RTX 5060 Ti (Blackwell sm_120).
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: all
+  #             capabilities: [gpu]
+  #   restart: unless-stopped

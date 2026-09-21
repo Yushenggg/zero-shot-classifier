@@ -1,0 +1,15 @@
+# Model settings for the zero-shot classifier (SmolLM2-360M on CPU).
+
+model = "HuggingFaceTB/SmolLM2-360M-Instruct"
+save_to = "models/smollm2-360m-instruct"
+
+device = "cpu"
+
+gpu = "rtx_5060_ti"
+
+kv_cache = true
+
+temperature = 1.0
+
+calibrate = true
+calibration_context = "N/A"

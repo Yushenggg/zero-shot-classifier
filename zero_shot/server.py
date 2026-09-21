@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -123,7 +124,9 @@ def classify_endpoint(request: ClassifyRequest) -> JSONResponse:
 
 
 def main() -> None:
-    uvicorn.run("zero_shot.server:app", host="127.0.0.1", port=8000, reload=False)
+    host = os.environ.get("ZERO_SHOT_HOST", "127.0.0.1")
+    port = int(os.environ.get("ZERO_SHOT_PORT", "8000"))
+    uvicorn.run("zero_shot.server:app", host=host, port=port, reload=False)
 
 
 if __name__ == "__main__":
