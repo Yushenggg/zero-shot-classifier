@@ -55,6 +55,9 @@ class Config:
     device: str = DEFAULT_DEVICE
     gpu: str = DEFAULT_GPU
     kv_cache: bool = True
+    temperature: float = 1.0
+    calibrate: bool = True
+    calibration_context: str = "N/A"
     base_dir: Path = field(default_factory=Path.cwd)
 
     @property
@@ -94,11 +97,17 @@ def load_config(path: str | Path | None = None) -> Config:
         return Config(base_dir=Path.cwd())
 
     data = tomllib.loads(config_path.read_text())
+    temperature = float(data.get("temperature", 1.0))
+    if temperature <= 0:
+        raise ValueError(f"config temperature must be > 0, got {temperature}")
     return Config(
         model=str(data.get("model", DEFAULT_MODEL_ID)),
         save_to=_clean(data.get("save_to", DEFAULT_SAVE_TO)),
         device=str(data.get("device", DEFAULT_DEVICE)).strip().lower(),
         gpu=str(data.get("gpu", DEFAULT_GPU)),
         kv_cache=bool(data.get("kv_cache", True)),
+        temperature=temperature,
+        calibrate=bool(data.get("calibrate", True)),
+        calibration_context=str(data.get("calibration_context", "N/A")),
         base_dir=config_path.resolve().parent,
     )

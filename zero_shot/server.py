@@ -8,6 +8,7 @@ from typing import Any
 import uvicorn
 from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .classifier import classify
@@ -45,6 +46,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Zero-Shot Classifier", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 class ClassifyRequest(BaseModel):
@@ -52,8 +54,10 @@ class ClassifyRequest(BaseModel):
     questions: dict[str, Any] | None = None
     question: dict[str, Any] | None = None  # legacy alias for `questions`
     model: str | None = None
-    temperature: float = 1.0
+    temperature: float | None = None
     kv_cache: bool | None = None
+    calibrate: bool | None = None
+    calibration_context: str | None = None
 
 
 @app.get("/")
@@ -69,6 +73,8 @@ def health() -> dict[str, Any]:
         "device": _RESOLVED_DEVICE or CONFIG.device,
         "gpu": CONFIG.gpu,
         "kv_cache": CONFIG.kv_cache,
+        "temperature": CONFIG.temperature,
+        "calibrate": CONFIG.calibrate,
         "model_loaded": is_loaded(CONFIG.model),
     }
 
@@ -89,8 +95,10 @@ def classify_endpoint(request: ClassifyRequest) -> JSONResponse:
             save_to=CONFIG.save_to_for(model_id),
             device=CONFIG.device,
             gpu=CONFIG.gpu,
-            temperature=request.temperature,
+            temperature=request.temperature if request.temperature is not None else CONFIG.temperature,
             use_kv_cache=request.kv_cache if request.kv_cache is not None else CONFIG.kv_cache,
+            calibrate=request.calibrate if request.calibrate is not None else CONFIG.calibrate,
+            calibration_context=request.calibration_context or CONFIG.calibration_context,
         )
     except (ValueError, RuntimeError) as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})

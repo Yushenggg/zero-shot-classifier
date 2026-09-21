@@ -22,3 +22,14 @@ gpu = "rtx_5060_ti"
 # tokens can shift. If a model can't reuse its cache, the scorer falls back to
 # exact scoring and logs a warning. Set false to always use the exact path.
 kv_cache = true
+
+# Softmax temperature over the option scores (default 1.0). Does NOT change the
+# chosen option. Higher = less certain (smoother probabilities, lower confidence);
+# lower = more certain. e.g. 10 flattens heavily, 0.1 sharpens toward the top.
+temperature = 1.0
+
+# Contextual calibration: subtract each option's content-free prior before the
+# softmax, removing surface-form/option bias (digits, yes/no, token length).
+# Costs a second scoring pass over a small null prompt.
+calibrate = true
+calibration_context = "N/A"

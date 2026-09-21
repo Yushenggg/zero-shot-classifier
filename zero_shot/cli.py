@@ -101,8 +101,27 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--temperature",
         type=float,
-        default=1.0,
-        help="Softmax temperature over the options; <1 sharpens, >1 smooths (default 1.0).",
+        default=None,
+        help="Softmax temperature over the options; <1 sharpens, >1 smooths. "
+        "Defaults to config.toml (1.0).",
+    )
+    parser.add_argument(
+        "--calibrate",
+        dest="calibrate",
+        action="store_true",
+        default=None,
+        help="Subtract each option's content-free prior (default from config.toml).",
+    )
+    parser.add_argument(
+        "--no-calibrate",
+        dest="calibrate",
+        action="store_false",
+        help="Disable contextual calibration.",
+    )
+    parser.add_argument(
+        "--calibration-context",
+        default=None,
+        help='Content-free context used for calibration (default "N/A").',
     )
     parser.add_argument(
         "--kv-cache",
@@ -130,6 +149,11 @@ def main(argv: list[str] | None = None) -> int:
     device = args.device or config.device
     gpu = args.gpu or config.gpu
     use_kv_cache = config.kv_cache if args.kv_cache is None else args.kv_cache
+    temperature = args.temperature if args.temperature is not None else config.temperature
+    calibrate = config.calibrate if args.calibrate is None else args.calibrate
+    calibration_context = (
+        args.calibration_context if args.calibration_context is not None else config.calibration_context
+    )
 
     question = _load_json(args.question, "Question")
     state = _load_json(args.state, "State")
@@ -142,8 +166,10 @@ def main(argv: list[str] | None = None) -> int:
             save_to=save_to,
             device=device,
             gpu=gpu,
-            temperature=args.temperature,
+            temperature=temperature,
             use_kv_cache=use_kv_cache,
+            calibrate=calibrate,
+            calibration_context=calibration_context,
         )
     except (ValueError, RuntimeError) as exc:
         print(f"error: {exc}", file=sys.stderr)

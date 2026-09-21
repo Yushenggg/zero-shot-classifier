@@ -17,10 +17,11 @@ class OptionScore:
     tokens: list[TokenScore] = field(default_factory=list)
     eos_logprob: float | None = None
     logprob: float | None = None
+    calibrated_logprob: float | None = None
     probability: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out = {
             "option": self.option,
             "continuation": self.continuation,
             "tokens": [t.to_dict() for t in self.tokens],
@@ -28,6 +29,9 @@ class OptionScore:
             "logprob": self.logprob,
             "probability": self.probability,
         }
+        if self.calibrated_logprob is not None:
+            out["calibrated_logprob"] = self.calibrated_logprob
+        return out
 
 
 @dataclass
@@ -87,35 +91,28 @@ def _build_question(name: str, spec: dict[str, Any], state: Any) -> tuple[str, l
         raise ValueError(f"Question '{name}' has unsupported type {qtype!r}; use one of {SUPPORTED_TYPES}")
 
     header = (
-        "You are a precise zero-shot classifier. Use only the CONTEXT and the "
-        "INSTRUCTIONS to decide.\n\n"
-        f"# CONTEXT (state)\n{_render(state)}\n\n"
-        f"# TASK: {name}\n{_render(spec.get('instructions', ''))}\n\n"
+        "You are a precise zero-shot classifier. Use only the context and the "
+        "instructions.\n\n"
+        f"# CONTEXT\n{_render(state)}\n\n"
+        f"# TASK\n{_render(spec.get('instructions', ''))}\n\n"
     )
 
     if qtype == "choice":
         criteria = spec.get("criteria") or {}
         if not criteria:
             raise ValueError(f"Question '{name}' (choice) needs a non-empty criteria map")
-        lines = "\n".join(f"- {key}: {_render(desc)}" for key, desc in criteria.items())
         prompt = (
             header
-            + f"# CHOICES (choose exactly one key)\n{lines}\n\n"
-            + f"# ANSWER\nThe best choice for {name} is:"
+            + "# ANSWER\nRespond with exactly one option key and nothing else.\n"
+            + f'The best option for "{name}" is:'
         )
         options = [(key, key) for key in criteria]
 
     elif qtype == "noul":
-        criteria = spec.get("criteria") or {}
-        extra = ""
-        if criteria:
-            extra = "# CRITERIA\n" + "\n".join(
-                f"- {key}: {_render(desc)}" for key, desc in criteria.items()
-            ) + "\n\n"
         prompt = (
             header
-            + extra
-            + f'# ANSWER\nAnswer yes or no. The answer to "{name}" is:'
+            + "# ANSWER\nRespond with exactly one word, yes or no, and nothing else.\n"
+            + f'The answer to "{name}" is:'
         )
         options = [("true", "yes"), ("false", "no")]
 
@@ -129,21 +126,26 @@ def _build_question(name: str, spec: dict[str, Any], state: Any) -> tuple[str, l
         prompt = (
             header
             + f"# RATING SCALE (0 = low, {len(levels) - 1} = high)\n{scale}\n\n"
-            + "# ANSWER\nThe rating is:"
+            + "# ANSWER\nRespond with exactly one number and nothing else.\n"
+            + "The rating is:"
         )
         options = [(str(i), str(i)) for i in range(len(levels))]
 
     return prompt, options
 
 
+def _effective_logprob(score: OptionScore) -> float | None:
+    return score.calibrated_logprob if score.calibrated_logprob is not None else score.logprob
+
+
 def _softmax(scores: list[OptionScore], temperature: float) -> None:
     if temperature <= 0:
         raise ValueError("temperature must be > 0")
-    known = [s for s in scores if s.logprob is not None]
+    known = [s for s in scores if _effective_logprob(s) is not None]
     if not known:
         return
-    peak = max(s.logprob for s in known)
-    weights = [math.exp((s.logprob - peak) / temperature) for s in known]
+    peak = max(_effective_logprob(s) for s in known)
+    weights = [math.exp((_effective_logprob(s) - peak) / temperature) for s in known]
     total = sum(weights)
     for score, weight in zip(known, weights):
         score.probability = weight / total
@@ -160,13 +162,23 @@ def classify_one(
     gpu: str | None = None,
     temperature: float = 1.0,
     use_kv_cache: bool = False,
+    calibrate: bool = False,
+    calibration_context: str = "N/A",
 ) -> Classification:
     prompt, options = _build_question(name, spec, state)
     scorer = get_scorer(model_id, save_to=save_to, device=device, gpu=gpu)
+    texts = [text for _, text in options]
     sequence_scores: list[SequenceScore] = scorer.score_options(
-        prompt, [text for _, text in options], use_kv_cache=use_kv_cache
+        prompt, texts, use_kv_cache=use_kv_cache
     )
     by_text = {s.option: s for s in sequence_scores}
+
+    # Contextual calibration: subtract each option's content-free prior.
+    null_by_text: dict[str, float] = {}
+    if calibrate:
+        null_prompt, _ = _build_question(name, spec, calibration_context)
+        null_scores = scorer.score_options(null_prompt, texts, use_kv_cache=use_kv_cache)
+        null_by_text = {s.option: s.total_logprob for s in null_scores}
 
     scores: list[OptionScore] = []
     for option_id, text in options:
@@ -174,6 +186,7 @@ def classify_one(
         if seq is None:
             scores.append(OptionScore(option=option_id, continuation=text))
         else:
+            calibrated = seq.total_logprob - null_by_text[text] if text in null_by_text else None
             scores.append(
                 OptionScore(
                     option=option_id,
@@ -181,6 +194,7 @@ def classify_one(
                     tokens=seq.tokens,
                     eos_logprob=seq.eos_logprob,
                     logprob=seq.total_logprob,
+                    calibrated_logprob=calibrated,
                 )
             )
     _softmax(scores, temperature)
@@ -227,6 +241,8 @@ def classify(
     gpu: str | None = None,
     temperature: float = 1.0,
     use_kv_cache: bool = False,
+    calibrate: bool = False,
+    calibration_context: str = "N/A",
 ) -> list[Classification]:
     """Evaluate `state` against a map of typed questions.
 
@@ -239,8 +255,9 @@ def classify(
         score:  {"type": "score", "instructions": "...",
                  "criteria": ["Calm", "Frustrated", "Very angry"]} # 2-10 ordered levels
 
-    `instructions`, criteria descriptions, and `state` may also be structured
-    (objects/arrays); they are rendered as JSON in the prompt.
+    Candidate keys are scored directly and are not listed in the prompt. With
+    `calibrate=True`, each option's content-free prior (from `calibration_context`)
+    is subtracted before the softmax, removing surface-form/option bias.
     """
     if not isinstance(question, dict) or not question:
         raise ValueError("question must be a non-empty JSON object")
@@ -255,6 +272,8 @@ def classify(
             gpu=gpu,
             temperature=temperature,
             use_kv_cache=use_kv_cache,
+            calibrate=calibrate,
+            calibration_context=calibration_context,
         )
         for name, spec in question.items()
     ]
