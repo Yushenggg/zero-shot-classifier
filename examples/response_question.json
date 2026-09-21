@@ -1,0 +1,10 @@
+{
+  "response": {
+    "type": "choice",
+    "instructions": "what is the likely response",
+    "criteria": {
+      "Yes": "Yes",
+      "Yes I do!": "Yes I do!"
+    }
+  }
+}

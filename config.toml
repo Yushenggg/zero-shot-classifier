@@ -1,0 +1,9 @@
+# Model settings for the zero-shot classifier.
+
+# Hugging Face model id (or a local directory path).
+model = "google/gemma-4-E2B-it"
+
+# Directory to download and load the model from. Once populated, the model is
+# loaded from disk and Hugging Face is not contacted again.
+# Set to "" to use the default Hugging Face cache instead.
+save_to = "models/gemma-4-E2B-it"

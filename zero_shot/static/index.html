@@ -1,0 +1,257 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Zero-Shot Classifier</title>
+<style>
+  :root {
+    --bg: #0f172a; --panel: #1e293b; --panel-2: #273449;
+    --text: #e2e8f0; --muted: #94a3b8; --accent: #38bdf8;
+    --ok: #4ade80; --err: #f87171; --border: #334155;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    background: var(--bg); color: var(--text); min-height: 100vh;
+  }
+  header {
+    padding: 20px 28px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+  header h1 { font-size: 18px; margin: 0; }
+  header .status { font-size: 12px; color: var(--muted); margin-left: auto; }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--muted); margin-right: 6px; }
+  .dot.ok { background: var(--ok); }
+  .dot.err { background: var(--err); }
+  main { padding: 24px 28px; display: grid; gap: 20px; grid-template-columns: 1fr 1fr; align-items: start; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; }
+  textarea {
+    width: 100%; min-height: 300px; resize: vertical; background: var(--panel-2);
+    color: var(--text); border: 1px solid var(--border); border-radius: 8px;
+    padding: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13px; line-height: 1.5; tab-size: 2;
+  }
+  textarea:focus { outline: 1px solid var(--accent); }
+  .controls { display: grid; grid-template-columns: 1fr 120px auto; gap: 12px; align-items: end; }
+  @media (max-width: 900px) { .controls { grid-template-columns: 1fr; } }
+  label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  input[type=text] {
+    width: 100%; background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; font-size: 13px;
+  }
+  button {
+    background: var(--accent); color: #04263a; border: 0; border-radius: 8px;
+    padding: 11px 22px; font-size: 14px; font-weight: 600; cursor: pointer;
+  }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  #results { grid-column: 1 / -1; }
+  .result { background: var(--panel-2); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 8px; padding: 14px 16px; margin-bottom: 12px; }
+  .result .name { font-size: 12px; color: var(--muted); }
+  .result .choice { font-size: 20px; font-weight: 700; color: var(--accent); margin: 2px 0 8px; }
+  .score-row { margin: 10px 0; }
+  .score-top { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px; gap: 12px; }
+  .score-top .tick { color: var(--muted); font-family: ui-monospace, monospace; font-size: 12px; }
+  .bar-wrap { background: var(--panel); border-radius: 4px; height: 9px; overflow: hidden; }
+  .bar { height: 100%; background: var(--accent); transition: width .25s ease; }
+  details { margin-top: 10px; }
+  details summary { cursor: pointer; color: var(--muted); font-size: 13px; }
+  table.pt { width: 100%; border-collapse: collapse; margin-top: 8px; font-family: ui-monospace, monospace; font-size: 12px; }
+  table.pt th, table.pt td { text-align: left; padding: 3px 8px; border-bottom: 1px solid var(--border); }
+  table.pt th { color: var(--muted); font-weight: 500; }
+  table.pt td.num { text-align: right; white-space: nowrap; }
+  .error { color: var(--err); font-size: 14px; white-space: pre-wrap; }
+  .spinner { color: var(--muted); font-size: 14px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Zero-Shot Classifier</h1>
+  <span class="status"><span class="dot" id="dot"></span><span id="statusText">checking model…</span></span>
+</header>
+
+<main>
+  <section class="panel">
+    <h2>Question (JSON)</h2>
+    <textarea id="question" spellcheck="false"></textarea>
+  </section>
+
+  <section class="panel">
+    <h2>State / Context (JSON)</h2>
+    <textarea id="state" spellcheck="false"></textarea>
+  </section>
+
+  <section class="panel controls">
+    <div>
+      <label for="modelId">HF model id</label>
+      <input type="text" id="modelId" value="google/gemma-4-E2B-it" />
+    </div>
+    <div>
+      <label for="temperature">Softmax temp</label>
+      <input type="text" id="temperature" value="1.0" />
+    </div>
+    <button id="run">Classify</button>
+  </section>
+
+  <section class="panel" id="results">
+    <h2>Result</h2>
+    <div id="output"><span class="spinner">Results will appear here.</span></div>
+  </section>
+</main>
+
+<script>
+const sampleQuestion = {
+  "response": {
+    "type": "choice",
+    "instructions": "what is the likely response",
+    "criteria": {
+      "Yes": "Yes",
+      "Yes I do!": "Yes I do!"
+    }
+  }
+};
+
+const sampleState = {
+  "input": "Will you marry me!"
+};
+
+document.getElementById("question").value = JSON.stringify(sampleQuestion, null, 2);
+document.getElementById("state").value = JSON.stringify(sampleState, null, 2);
+
+const dot = document.getElementById("dot");
+const statusText = document.getElementById("statusText");
+const output = document.getElementById("output");
+const runBtn = document.getElementById("run");
+
+async function checkHealth() {
+  const modelId = document.getElementById("modelId").value.trim();
+  dot.className = "dot";
+  statusText.textContent = "checking model…";
+  try {
+    const res = await fetch("/api/health?model_id=" + encodeURIComponent(modelId));
+    const data = await res.json();
+    if (data.ok) {
+      dot.className = "dot ok";
+      statusText.textContent = data.model_loaded ? "model loaded" : "model will load on first run";
+    } else {
+      dot.className = "dot err";
+      statusText.textContent = "unavailable";
+    }
+  } catch (e) {
+    dot.className = "dot err";
+    statusText.textContent = "health check failed";
+  }
+}
+
+function parseJson(id, label) {
+  try {
+    return JSON.parse(document.getElementById(id).value);
+  } catch (e) {
+    throw new Error(label + " is not valid JSON: " + e.message);
+  }
+}
+
+function el(tag, cls, text) {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+
+function tokenTable(score) {
+  const table = el("table", "pt");
+  const headRow = el("tr");
+  ["token", "token id", "logprob"].forEach((h) => headRow.appendChild(el("th", null, h)));
+  const thead = el("thead");
+  thead.appendChild(headRow);
+  const tbody = el("tbody");
+  for (const t of score.tokens) {
+    const tr = el("tr");
+    tr.appendChild(el("td", null, JSON.stringify(t.token)));
+    tr.appendChild(el("td", "num", String(t.token_id)));
+    tr.appendChild(el("td", "num", t.logprob.toFixed(4)));
+    tbody.appendChild(tr);
+  }
+  const eosRow = el("tr");
+  eosRow.appendChild(el("td", null, "<eos>"));
+  eosRow.appendChild(el("td", "num", ""));
+  eosRow.appendChild(el("td", "num", score.eos_logprob.toFixed(4)));
+  tbody.appendChild(eosRow);
+  table.append(thead, tbody);
+  return table;
+}
+
+function renderResult(r) {
+  const div = el("div", "result");
+  div.appendChild(el("div", "name", r.name));
+
+  const scores = [...r.scores].sort((a, b) => b.probability - a.probability);
+  for (const s of scores) {
+    const row = el("div", "score-row");
+    const top = el("div", "score-top");
+    const label = el("span");
+    label.appendChild(document.createTextNode(s.option + " "));
+    const tokText = (s.tokens || []).map((t) => JSON.stringify(t.token)).join(" ") + " <eos>";
+    label.appendChild(el("span", "tick", s.logprob === null ? "" : ` ${tokText}  logp=${s.logprob.toFixed(3)}`));
+    top.appendChild(label);
+    top.appendChild(el("span", null, (s.probability * 100).toFixed(2) + "%"));
+    const wrap = el("div", "bar-wrap");
+    const bar = el("div", "bar");
+    bar.style.width = Math.max(0, Math.min(1, s.probability)) * 100 + "%";
+    wrap.appendChild(bar);
+
+    const details = el("details");
+    details.appendChild(el("summary", null, "token probabilities"));
+    details.appendChild(tokenTable(s));
+    details.appendChild(el("div", "tick", "total logp = " + (s.logprob === null ? "n/a" : s.logprob.toFixed(4))));
+
+    row.append(top, wrap, details);
+    div.appendChild(row);
+  }
+
+  div.appendChild(el("div", "choice", "→ " + (r.choice || "(none)")));
+  const promptDetails = el("details");
+  promptDetails.appendChild(el("summary", null, "prompt"));
+  const pre = el("div", "tick");
+  pre.style.whiteSpace = "pre-wrap";
+  pre.textContent = r.prompt;
+  promptDetails.appendChild(pre);
+  div.appendChild(promptDetails);
+  return div;
+}
+
+runBtn.addEventListener("click", async () => {
+  output.innerHTML = '<span class="spinner">Classifying… (the first run loads the model)</span>';
+  runBtn.disabled = true;
+  try {
+    const question = parseJson("question", "Question");
+    const state = parseJson("state", "State");
+    const res = await fetch("/api/classify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        question,
+        state,
+        model_id: document.getElementById("modelId").value.trim() || "google/gemma-4-E2B-it",
+        temperature: parseFloat(document.getElementById("temperature").value) || 1.0,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || ("HTTP " + res.status));
+    output.innerHTML = "";
+    for (const r of data.results) output.appendChild(renderResult(r));
+    checkHealth();
+  } catch (e) {
+    output.innerHTML = '<div class="error"></div>';
+    output.firstChild.textContent = String(e.message || e);
+  } finally {
+    runBtn.disabled = false;
+  }
+});
+
+checkHealth();
+</script>
+</body>
+</html>

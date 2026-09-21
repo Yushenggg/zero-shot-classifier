@@ -1,0 +1,11 @@
+{
+  "sentiment": {
+    "type": "choice",
+    "instructions": "Classify the sentiment of the customer message in the state.",
+    "criteria": {
+      "positive": "The customer is happy or satisfied.",
+      "negative": "The customer is unhappy, frustrated or angry.",
+      "neutral": "The customer is factual with no clear emotion."
+    }
+  }
+}
