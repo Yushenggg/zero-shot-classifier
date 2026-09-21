@@ -17,10 +17,12 @@ from .scorer import get_scorer, is_loaded
 STATIC_DIR = Path(__file__).parent / "static"
 CONFIG = load_config()
 logger = logging.getLogger("uvicorn.error")
+_RESOLVED_DEVICE: str | None = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _RESOLVED_DEVICE
     logger.info(
         "Loading model %s on device=%s (gpu=%s, kv_cache=%s) ...",
         CONFIG.model,
@@ -35,9 +37,8 @@ async def lifespan(app: FastAPI):
             device=CONFIG.device,
             gpu=CONFIG.gpu,
         )
-        logger.info(
-            "Model ready: %s on %s", type(scorer._model).__name__, scorer.device
-        )
+        _RESOLVED_DEVICE = scorer.device
+        logger.info("Model ready: %s on %s", type(scorer._model).__name__, scorer.device)
     except Exception as exc:  # noqa: BLE001 - keep serving; retry on first request
         logger.warning("Model preload failed (%s: %s); will load on first request.", type(exc).__name__, exc)
     yield
@@ -47,8 +48,10 @@ app = FastAPI(title="Zero-Shot Classifier", lifespan=lifespan)
 
 
 class ClassifyRequest(BaseModel):
-    question: Any
     state: Any = None
+    questions: dict[str, Any] | None = None
+    question: dict[str, Any] | None = None  # legacy alias for `questions`
+    model: str | None = None
     temperature: float = 1.0
     kv_cache: bool | None = None
 
@@ -63,7 +66,7 @@ def health() -> dict[str, Any]:
     return {
         "ok": True,
         "model_id": CONFIG.model,
-        "device": CONFIG.device,
+        "device": _RESOLVED_DEVICE or CONFIG.device,
         "gpu": CONFIG.gpu,
         "kv_cache": CONFIG.kv_cache,
         "model_loaded": is_loaded(CONFIG.model),
@@ -71,13 +74,19 @@ def health() -> dict[str, Any]:
 
 
 @app.post("/api/classify")
+@app.post("/v1/systemone")
 def classify_endpoint(request: ClassifyRequest) -> JSONResponse:
+    questions = request.questions if request.questions is not None else request.question
+    if not questions:
+        return JSONResponse(status_code=422, content={"error": "`questions` is required"})
+
+    model_id = request.model or CONFIG.model
     try:
         results = classify(
-            request.question,
+            questions,
             request.state,
-            model_id=CONFIG.model,
-            save_to=CONFIG.resolve_save_to(),
+            model_id=model_id,
+            save_to=CONFIG.save_to_for(model_id),
             device=CONFIG.device,
             gpu=CONFIG.gpu,
             temperature=request.temperature,
@@ -85,7 +94,20 @@ def classify_endpoint(request: ClassifyRequest) -> JSONResponse:
         )
     except (ValueError, RuntimeError) as exc:
         return JSONResponse(status_code=400, content={"error": str(exc)})
-    return JSONResponse(content={"results": [r.to_dict() for r in results]})
+
+    answers = {r.name: r.to_dict() for r in results}
+    usage = {
+        "input_tokens": sum(r.input_tokens for r in results),
+        "output_tokens": sum(r.output_tokens for r in results),
+    }
+    return JSONResponse(
+        content={
+            "model": model_id,
+            "answers": answers,
+            "results": list(answers.values()),
+            "usage": usage,
+        }
+    )
 
 
 def main() -> None:

@@ -9,9 +9,10 @@ model = "Qwen/Qwen3-4B-Instruct-2507"
 # Set to "" to use the default Hugging Face cache instead.
 save_to = "models/qwen3-4b-instruct-2507"
 
-# Compute device: "cpu" (default) or "gpu" (alias "cuda").
-# GPU mode needs the CUDA PyTorch build:  uv pip install --reinstall -r requirements-gpu.txt
-device = "gpu"
+# Compute device: "auto" (GPU if available, else CPU), "cpu", or "gpu"/"cuda".
+# `uv sync` installs the CUDA build by default; switch to CPU with
+#   uv pip install --reinstall -r requirements-cpu.txt
+device = "auto"
 
 # Which GPU to run on when device = "gpu". Supported: "rtx_5060_ti".
 gpu = "rtx_5060_ti"

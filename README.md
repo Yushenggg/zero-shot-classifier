@@ -17,6 +17,26 @@ reasoning behind the current shape of the project.
 
 Including EOS is what lets a longer but more complete answer win over a short one.
 
+## Question types
+
+`question` is a map of named, typed questions (all three types can be mixed in one
+call):
+
+- **`choice`** — pick one option. `criteria` is a map of `option → rubric`.
+- **`noul`** — yes/no. Returns the probability of "yes" (`noul`). `criteria`
+  (`{"true": ..., "false": ...}`) is optional.
+- **`score`** — rate on an ordered scale. `criteria` is an ordered array of 2–10
+  level descriptions. Returns `score` (a probability-weighted value that can land
+  between levels), the per-level `probabilities`, and a `legend`.
+
+`instructions`, criteria descriptions, and `state` may be plain strings or
+structured objects/arrays (rendered as JSON in the prompt). `choice` and `score`
+answers also include a `confidence` (the sum of squared probabilities).
+
+Examples: [examples/payouts_questions.json](examples/payouts_questions.json) (all
+three types) with [examples/payouts_state.json](examples/payouts_state.json), and
+the apple example in [examples/color_question.json](examples/color_question.json).
+
 ## Setup
 
 ```bash
@@ -30,7 +50,7 @@ Model settings live in `config.toml`:
 ```toml
 model = "Qwen/Qwen3-4B-Instruct-2507"
 save_to = "models/qwen3-4b-instruct-2507"   # loaded from disk after first download
-device = "gpu"                        # "cpu" or "gpu"
+device = "auto"                       # auto | cpu | gpu
 gpu = "rtx_5060_ti"                   # which GPU when device = "gpu"
 kv_cache = true                       # reuse one KV cache for the shared prompt
 ```
@@ -53,27 +73,27 @@ exact scoring.
 
 ## CPU vs GPU
 
-The project installs the small CPU-only PyTorch wheel by default. Two files switch
-builds (use `--reinstall`, because `torch==2.14.0` is otherwise considered already
-satisfied by the installed build):
+`uv sync` installs the **CUDA** build of PyTorch by default (CUDA 13, supports the
+RTX 5060 Ti / Blackwell sm_120). On a machine without a GPU, switch to the CPU-only
+build:
 
 ```bash
-uv pip install --reinstall -r requirements-cpu.txt   # CPU-only (default)
-uv pip install --reinstall -r requirements-gpu.txt   # CUDA 13, supports RTX 5060 Ti
+uv pip install --reinstall -r requirements-cpu.txt   # CPU fallback
+uv pip install --reinstall -r requirements-gpu.txt   # restore the CUDA build
 ```
 
-Currently supported GPU: `rtx_5060_ti` (Blackwell, sm_120, CUDA 13). With GPU mode,
-`resolve_device` checks that CUDA is available and that
-`torch.cuda.get_device_name()` matches the configured GPU.
-
-After installing the GPU build, run without `uv sync` reverting it — use
-`.venv/bin/...` or `uv run --no-sync ...`.
+`device = "auto"` uses the GPU when available and falls back to CPU otherwise. Set
+`device = "gpu"` to require the GPU (validated against `gpu`, currently
+`rtx_5060_ti`), or `device = "cpu"` to force CPU.
 
 ## Usage
 
 ```bash
 # device comes from config.toml
 .venv/bin/zero-shot -q examples/color_question.json -s examples/color_state.json
+
+# choice + noul + score in one call
+.venv/bin/zero-shot -q examples/payouts_questions.json -s examples/payouts_state.json
 
 # force the exact (non-KV) path
 .venv/bin/zero-shot -q examples/color_question.json -s examples/color_state.json --no-kv-cache
@@ -83,6 +103,32 @@ After installing the GPU build, run without `uv sync` reverting it — use
 
 The server preloads the configured model at startup and logs the device, so you can
 confirm whether it is running on CPU or GPU.
+
+### HTTP API
+
+`POST /api/classify` (also mounted at the TypeSafe-compatible `POST /v1/systemone`)
+accepts a TypeSafe-style body (all three question types can be mixed):
+
+```json
+{
+  "state": { "input": "Help! My payouts have been failing for 3 days." },
+  "model": "Qwen/Qwen3-4B-Instruct-2507",
+  "questions": {
+    "is_urgent": { "type": "noul", "instructions": "Does this convey urgency?" },
+    "frustration": { "type": "score", "instructions": "How frustrated is the customer?", "criteria": ["Calm", "Frustrated", "Very angry"] },
+    "department": { "type": "choice", "instructions": "Which team should handle this?", "criteria": { "billing": "Payments", "technical": "Bugs", "sales": "Pricing" } }
+  }
+}
+```
+
+Returns `{"model": ..., "answers": { "<id>": <answer> }, "results": [ ... ], "usage":
+{"input_tokens": ..., "output_tokens": ...}}`, with answer shapes matching TypeSafe
+(`noul`, `choice` + `probabilities` + `confidence`, `score` + `legend` +
+`probabilities` + `confidence`).
+
+`model` is optional and defaults to `config.toml`; if a different model is given it
+is loaded from (or downloaded into) a sibling directory under `models/`.
+`GET /api/health` reports the configured model and device.
 
 ## License
 

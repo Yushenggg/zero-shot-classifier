@@ -78,7 +78,7 @@
 
 <main>
   <section class="panel">
-    <h2>Question (JSON)</h2>
+    <h2>Questions (JSON)</h2>
     <textarea id="question" spellcheck="false"></textarea>
   </section>
 
@@ -190,14 +190,15 @@ function tokenTable(score) {
 
 function renderResult(r) {
   const div = el("div", "result");
-  div.appendChild(el("div", "name", r.name));
+  div.appendChild(el("div", "name", r.name + "  ·  " + r.type));
 
   const scores = [...r.scores].sort((a, b) => b.probability - a.probability);
   for (const s of scores) {
     const row = el("div", "score-row");
     const top = el("div", "score-top");
     const label = el("span");
-    label.appendChild(document.createTextNode(s.option + " "));
+    const display = s.continuation && s.continuation !== s.option ? s.option + " (" + s.continuation + ")" : s.option;
+    label.appendChild(document.createTextNode(display + " "));
     const tokText = (s.tokens || []).map((t) => JSON.stringify(t.token)).join(" ") + " <eos>";
     label.appendChild(el("span", "tick", s.logprob === null ? "" : ` ${tokText}  logp=${s.logprob.toFixed(3)}`));
     top.appendChild(label);
@@ -216,7 +217,19 @@ function renderResult(r) {
     div.appendChild(row);
   }
 
-  div.appendChild(el("div", "choice", "→ " + (r.choice || "(none)")));
+  let headline = "";
+  if (r.type === "choice") headline = "→ " + (r.choice || "(none)");
+  else if (r.type === "noul") headline = "noul = " + (r.noul ?? 0).toFixed(4) + "  (yes)";
+  else if (r.type === "score") headline = "score = " + (r.score ?? 0).toFixed(3) + " (levels 0.." + (r.scores.length - 1) + ")";
+  if (r.confidence !== undefined && r.confidence !== null) headline += "   confidence=" + r.confidence.toFixed(3);
+  div.appendChild(el("div", "choice", headline));
+
+  if (r.legend) {
+    const legend = el("div", "tick");
+    legend.textContent = Object.entries(r.legend).map(([k, v]) => k + ": " + v).join("   ");
+    div.appendChild(legend);
+  }
+
   const promptDetails = el("details");
   promptDetails.appendChild(el("summary", null, "prompt"));
   const pre = el("div", "tick");
@@ -237,7 +250,7 @@ runBtn.addEventListener("click", async () => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        question,
+        questions: question,
         state,
         temperature: parseFloat(document.getElementById("temperature").value) || 1.0,
       }),

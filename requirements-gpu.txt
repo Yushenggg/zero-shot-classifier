@@ -1,5 +1,6 @@
 # CUDA build of PyTorch for NVIDIA GeForce RTX 5060 Ti (Blackwell, sm_120, CUDA 13).
-# PyPI's default Linux torch wheel is the CUDA 13 build.
+# This is what `uv sync` installs by default; use this to restore it after
+# switching to the CPU build.
 #
 #   uv pip install --reinstall -r requirements-gpu.txt
 #

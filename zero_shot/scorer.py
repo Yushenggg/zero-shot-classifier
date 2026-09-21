@@ -19,14 +19,20 @@ _MODEL_PATTERNS = ["*.json", "*.safetensors", "*.jinja"]
 def resolve_device(device: str = "cpu", gpu: str | None = None) -> str:
     """Map the config device to a torch device string, validating the GPU.
 
-    `device` is "cpu" (default) or "gpu"/"cuda". When GPU mode is requested,
-    `gpu` names one of the supported GPUs in `config.SUPPORTED_GPUS`.
+    `device` is "auto" (use CUDA if available, else CPU), "cpu", or
+    "gpu"/"cuda". When GPU mode is requested, `gpu` names one of the supported
+    GPUs in `config.SUPPORTED_GPUS`.
     """
-    device = (device or "cpu").strip().lower()
+    device = (device or "auto").strip().lower()
+
+    if device == "auto":
+        import torch
+
+        return "cuda" if torch.cuda.is_available() else "cpu"
     if device == "cpu":
         return "cpu"
     if device not in ("gpu", "cuda"):
-        raise ValueError(f"Unknown device {device!r}; use 'cpu', 'gpu' or 'cuda'.")
+        raise ValueError(f"Unknown device {device!r}; use 'auto', 'cpu', 'gpu' or 'cuda'.")
 
     import torch
 
@@ -99,10 +105,10 @@ def resolve_model_dir(model_id: str, save_to: str | None) -> tuple[str, bool]:
     return str(dest), True
 
 
-class GemmaScorer:
-    """Scores a continuation under Gemma using the full-vocabulary next-token
-    distribution. Exact token probabilities (not limited to any top-k) and the
-    true EOS probability are read from the logits.
+class Scorer:
+    """Scores a continuation under the loaded model using the full-vocabulary
+    next-token distribution. Exact token probabilities (not limited to any top-k)
+    and the true EOS probability are read from the logits.
     """
 
     def __init__(
@@ -343,7 +349,7 @@ class GemmaScorer:
         return results
 
 
-_SCORERS: dict[tuple[str, str | None, str], GemmaScorer] = {}
+_SCORERS: dict[tuple[str, str | None, str], Scorer] = {}
 _LOCK = threading.Lock()
 
 
@@ -352,13 +358,13 @@ def get_scorer(
     save_to: str | None = None,
     device: str = "cpu",
     gpu: str | None = None,
-) -> GemmaScorer:
+) -> Scorer:
     """Load (once) and cache a scorer per (model, save dir, resolved device)."""
     resolved = resolve_device(device, gpu)
     key = (model_id, str(save_to) if save_to else None, resolved)
     with _LOCK:
         if key not in _SCORERS:
-            _SCORERS[key] = GemmaScorer(model_id, save_to=save_to, device=resolved)
+            _SCORERS[key] = Scorer(model_id, save_to=save_to, device=resolved)
         return _SCORERS[key]
 
 

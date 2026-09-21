@@ -1,4 +1,5 @@
-# CPU-only PyTorch (project default). Smaller download, no CUDA.
+# CPU-only PyTorch. Use this on machines without a GPU; `uv sync` installs the
+# CUDA build by default.
 #
 #   uv pip install --reinstall -r requirements-cpu.txt
 #

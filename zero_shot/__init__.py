@@ -1,16 +1,16 @@
-from .classifier import Classification, OptionScore, classify, classify_one, score_options
+from .classifier import SUPPORTED_TYPES, Classification, OptionScore, classify, classify_one
 from .config import Config, load_config
-from .scorer import GemmaScorer, SequenceScore, TokenScore, get_scorer, is_loaded
+from .scorer import Scorer, SequenceScore, TokenScore, get_scorer, is_loaded
 
 __all__ = [
+    "SUPPORTED_TYPES",
     "Classification",
     "OptionScore",
     "classify",
     "classify_one",
-    "score_options",
     "Config",
     "load_config",
-    "GemmaScorer",
+    "Scorer",
     "SequenceScore",
     "TokenScore",
     "get_scorer",

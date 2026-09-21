@@ -7,10 +7,13 @@ from typing import Any
 
 from .scorer import DEFAULT_MODEL_ID, SequenceScore, TokenScore, get_scorer
 
+SUPPORTED_TYPES = ("choice", "noul", "score")
+
 
 @dataclass
 class OptionScore:
     option: str
+    continuation: str = ""
     tokens: list[TokenScore] = field(default_factory=list)
     eos_logprob: float | None = None
     logprob: float | None = None
@@ -19,6 +22,7 @@ class OptionScore:
     def to_dict(self) -> dict[str, Any]:
         return {
             "option": self.option,
+            "continuation": self.continuation,
             "tokens": [t.to_dict() for t in self.tokens],
             "eos_logprob": self.eos_logprob,
             "logprob": self.logprob,
@@ -28,75 +32,121 @@ class OptionScore:
 
 @dataclass
 class Classification:
+    """One answered question.
+
+    Mirrors the TypeSafe answer shapes: `choice` for choice questions, `noul` for
+    yes/no, and `score` (+ `legend`) for ordered scales. `scores` always carries
+    the per-option detail; `confidence` is only set for choice/score.
+    """
+
     name: str
-    choice: str
+    type: str
     prompt: str
     scores: list[OptionScore]
+    choice: str | None = None
+    noul: float | None = None
+    score: float | None = None
+    legend: dict[str, str] | None = None
+    confidence: float | None = None
+    input_tokens: int = 0
+    output_tokens: int = 0
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        out: dict[str, Any] = {
             "name": self.name,
-            "choice": self.choice,
+            "type": self.type,
             "prompt": self.prompt,
+            "probabilities": {s.option: s.probability for s in self.scores},
             "scores": [s.to_dict() for s in self.scores],
         }
+        if self.type == "choice":
+            out["choice"] = self.choice
+        elif self.type == "noul":
+            out["noul"] = self.noul
+        elif self.type == "score":
+            out["score"] = self.score
+            out["legend"] = self.legend
+        if self.confidence is not None:
+            out["confidence"] = self.confidence
+        return out
 
 
-def _build_prompt(name: str, spec: dict[str, Any], state: Any) -> str:
-    criteria: dict[str, str] = spec.get("criteria", {})
-    instructions = spec.get("instructions", "")
-    choices = "\n".join(f"- {key}: {desc}" for key, desc in criteria.items())
-    context = json.dumps(state, indent=2, ensure_ascii=False, default=str)
-    return (
+def _render(value: Any) -> str:
+    """Render an instruction/criterion/state value (string, object, array, or null)."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, indent=2, ensure_ascii=False, default=str)
+
+
+def _build_question(name: str, spec: dict[str, Any], state: Any) -> tuple[str, list[tuple[str, str]]]:
+    """Return (prompt, options) where options is a list of (option_id, continuation)."""
+    qtype = spec.get("type")
+    if qtype not in SUPPORTED_TYPES:
+        raise ValueError(f"Question '{name}' has unsupported type {qtype!r}; use one of {SUPPORTED_TYPES}")
+
+    header = (
         "You are a precise zero-shot classifier. Use only the CONTEXT and the "
         "INSTRUCTIONS to decide.\n\n"
-        f"# CONTEXT (state)\n{context}\n\n"
-        f"# TASK: {name}\n{instructions}\n\n"
-        f"# CHOICES (choose exactly one key)\n{choices}\n\n"
-        "# ANSWER\n"
-        f"The best choice for {name} is:"
+        f"# CONTEXT (state)\n{_render(state)}\n\n"
+        f"# TASK: {name}\n{_render(spec.get('instructions', ''))}\n\n"
     )
 
+    if qtype == "choice":
+        criteria = spec.get("criteria") or {}
+        if not criteria:
+            raise ValueError(f"Question '{name}' (choice) needs a non-empty criteria map")
+        lines = "\n".join(f"- {key}: {_render(desc)}" for key, desc in criteria.items())
+        prompt = (
+            header
+            + f"# CHOICES (choose exactly one key)\n{lines}\n\n"
+            + f"# ANSWER\nThe best choice for {name} is:"
+        )
+        options = [(key, key) for key in criteria]
 
-def score_options(
-    criteria: dict[str, str],
-    sequence_scores: list[SequenceScore],
-    *,
-    temperature: float = 1.0,
-) -> list[OptionScore]:
-    """Turn sequence log-probabilities into a distribution over the options.
+    elif qtype == "noul":
+        criteria = spec.get("criteria") or {}
+        extra = ""
+        if criteria:
+            extra = "# CRITERIA\n" + "\n".join(
+                f"- {key}: {_render(desc)}" for key, desc in criteria.items()
+            ) + "\n\n"
+        prompt = (
+            header
+            + extra
+            + f'# ANSWER\nAnswer yes or no. The answer to "{name}" is:'
+        )
+        options = [("true", "yes"), ("false", "no")]
 
-    Each option's score is the exact log P(option) = sum of its token log-probs
-    plus the EOS log-prob (the probability that the answer ends there). Those
-    scores are then softmaxed with the given temperature.
-    """
+    else:  # score
+        levels = spec.get("criteria")
+        if not isinstance(levels, list) or len(levels) < 2:
+            raise ValueError(f"Question '{name}' (score) needs 2-10 ordered criteria levels")
+        if len(levels) > 10:
+            raise ValueError(f"Question '{name}' (score) has {len(levels)} levels; the max is 10")
+        scale = "\n".join(f"{i}: {_render(level)}" for i, level in enumerate(levels))
+        prompt = (
+            header
+            + f"# RATING SCALE (0 = low, {len(levels) - 1} = high)\n{scale}\n\n"
+            + "# ANSWER\nThe rating is:"
+        )
+        options = [(str(i), str(i)) for i in range(len(levels))]
+
+    return prompt, options
+
+
+def _softmax(scores: list[OptionScore], temperature: float) -> None:
     if temperature <= 0:
         raise ValueError("temperature must be > 0")
-
-    by_option = {s.option: s for s in sequence_scores}
-    scores: list[OptionScore] = []
-    for option in criteria:
-        seq = by_option.get(option)
-        if seq is None:
-            scores.append(OptionScore(option=option))
-        else:
-            scores.append(
-                OptionScore(
-                    option=option,
-                    tokens=seq.tokens,
-                    eos_logprob=seq.eos_logprob,
-                    logprob=seq.total_logprob,
-                )
-            )
-
     known = [s for s in scores if s.logprob is not None]
-    if known:
-        peak = max(s.logprob for s in known)
-        weights = [math.exp((s.logprob - peak) / temperature) for s in known]
-        total = sum(weights)
-        for score, weight in zip(known, weights):
-            score.probability = weight / total
-    return scores
+    if not known:
+        return
+    peak = max(s.logprob for s in known)
+    weights = [math.exp((s.logprob - peak) / temperature) for s in known]
+    total = sum(weights)
+    for score, weight in zip(known, weights):
+        score.probability = weight / total
 
 
 def classify_one(
@@ -111,23 +161,60 @@ def classify_one(
     temperature: float = 1.0,
     use_kv_cache: bool = False,
 ) -> Classification:
-    if spec.get("type") != "choice":
-        raise ValueError(f"Question '{name}' must have type 'choice', got {spec.get('type')!r}")
-    criteria: dict[str, str] = spec.get("criteria", {})
-    if not criteria:
-        raise ValueError(f"Question '{name}' has no criteria")
-
-    prompt = _build_prompt(name, spec, state)
+    prompt, options = _build_question(name, spec, state)
     scorer = get_scorer(model_id, save_to=save_to, device=device, gpu=gpu)
-    sequence_scores = scorer.score_options(
-        prompt, list(criteria.keys()), use_kv_cache=use_kv_cache
+    sequence_scores: list[SequenceScore] = scorer.score_options(
+        prompt, [text for _, text in options], use_kv_cache=use_kv_cache
     )
-    scores = score_options(criteria, sequence_scores, temperature=temperature)
+    by_text = {s.option: s for s in sequence_scores}
 
+    scores: list[OptionScore] = []
+    for option_id, text in options:
+        seq = by_text.get(text)
+        if seq is None:
+            scores.append(OptionScore(option=option_id, continuation=text))
+        else:
+            scores.append(
+                OptionScore(
+                    option=option_id,
+                    continuation=text,
+                    tokens=seq.tokens,
+                    eos_logprob=seq.eos_logprob,
+                    logprob=seq.total_logprob,
+                )
+            )
+    _softmax(scores, temperature)
+
+    input_tokens = len(scorer.tokenizer(prompt)["input_ids"])
     ranked = [s for s in scores if s.logprob is not None]
-    choice = max(ranked, key=lambda s: s.probability).option if ranked else ""
+    winner = max(ranked, key=lambda s: s.probability) if ranked else None
+    output_tokens = (len(winner.tokens) + 1) if winner else 0
 
-    return Classification(name=name, choice=choice, prompt=prompt, scores=scores)
+    qtype = spec["type"]
+    if qtype == "choice":
+        choice = winner.option if winner else None
+        confidence = sum(s.probability**2 for s in scores)
+        return Classification(
+            name, qtype, prompt, scores, choice=choice, confidence=confidence,
+            input_tokens=input_tokens, output_tokens=output_tokens,
+        )
+
+    if qtype == "noul":
+        yes = next((s.probability for s in scores if s.option == "true"), 0.0)
+        return Classification(
+            name, qtype, prompt, scores, noul=yes,
+            input_tokens=input_tokens, output_tokens=output_tokens,
+        )
+
+    # score
+    levels = spec["criteria"]
+    value = sum(int(s.option) * s.probability for s in scores)
+    legend = {str(i): _render(levels[i]) for i in range(len(levels))}
+    confidence = sum(s.probability**2 for s in scores)
+    return Classification(
+        name, qtype, prompt, scores, score=value, legend=legend, confidence=confidence,
+        input_tokens=input_tokens, output_tokens=output_tokens,
+    )
 
 
 def classify(
@@ -141,11 +228,19 @@ def classify(
     temperature: float = 1.0,
     use_kv_cache: bool = False,
 ) -> list[Classification]:
-    """Classify `state` against every choice question in `question`.
+    """Evaluate `state` against a map of typed questions.
 
-    `question` maps a name to a spec:
-        {"any_name": {"type": "choice", "instructions": "...",
-                      "criteria": {"option1": "desc", ...}}}
+    `question` maps a name to a spec, where `type` is one of:
+
+        choice: {"type": "choice", "instructions": "...",
+                 "criteria": {"option1": "desc", ...}}          # max 255 options
+        noul:   {"type": "noul", "instructions": "...",
+                 "criteria": {"true": "...", "false": "..."}}     # criteria optional
+        score:  {"type": "score", "instructions": "...",
+                 "criteria": ["Calm", "Frustrated", "Very angry"]} # 2-10 ordered levels
+
+    `instructions`, criteria descriptions, and `state` may also be structured
+    (objects/arrays); they are rendered as JSON in the prompt.
     """
     if not isinstance(question, dict) or not question:
         raise ValueError("question must be a non-empty JSON object")

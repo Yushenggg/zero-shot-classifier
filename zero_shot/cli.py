@@ -29,7 +29,7 @@ def _format_tokens(score) -> str:
 
 def _print_text(results: list[Classification], show_prompt: bool) -> None:
     for result in results:
-        print(f"=== {result.name} ===")
+        print(f"=== {result.name} ({result.type}) ===")
         if show_prompt:
             print("prompt:")
             for line in result.prompt.splitlines():
@@ -37,14 +37,29 @@ def _print_text(results: list[Classification], show_prompt: bool) -> None:
             print()
         print("score = sum(token logprob) + EOS logprob, then softmax over options")
         for score in result.scores:
+            label = score.option
+            if score.continuation and score.continuation != score.option:
+                label = f"{score.option} ({score.continuation})"
             if score.logprob is None:
-                print(f"  {score.option:<16} (not scored)")
-                continue
-            print(
-                f"  {score.option:<16} p={score.probability:7.4f}  "
-                f"logp={score.logprob:9.3f}   {_format_tokens(score)}"
-            )
-        print(f"Choice: {result.choice or '(none)'}")
+                print(f"  {label:<22} (not scored)")
+            else:
+                print(
+                    f"  {label:<22} p={score.probability:7.4f}  "
+                    f"logp={score.logprob:9.3f}   {_format_tokens(score)}"
+                )
+
+        if result.type == "choice":
+            print(f"Choice: {result.choice or '(none)'}")
+        elif result.type == "noul":
+            yes = result.noul or 0.0
+            print(f"Noul: {yes:.4f}   (yes={yes:.4f}, no={1 - yes:.4f})")
+        elif result.type == "score":
+            print(f"Score: {result.score:.4f}   (levels 0..{len(result.scores) - 1})")
+            for key, desc in (result.legend or {}).items():
+                print(f"  {key}: {desc}")
+        if result.confidence is not None:
+            print(f"Confidence: {result.confidence:.4f}")
+        print(f"Usage: input_tokens={result.input_tokens} output_tokens={result.output_tokens}")
         print()
 
 
@@ -52,8 +67,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="zero-shot",
         description=(
-            "Zero-shot choice classifier using the exact next-token distribution "
-            "(including EOS) of a local Gemma model."
+            "Zero-shot classifier using the exact next-token distribution (including "
+            "EOS) of a local model. Supports choice, noul (yes/no) and score questions."
         ),
     )
     parser.add_argument("--question", "-q", required=True, help="Question JSON file, or - for stdin.")

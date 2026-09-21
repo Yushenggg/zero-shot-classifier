@@ -7,7 +7,7 @@ from pathlib import Path
 
 DEFAULT_MODEL_ID = os.environ.get("ZERO_SHOT_MODEL", "Qwen/Qwen3-4B-Instruct-2507")
 DEFAULT_SAVE_TO: str | None = os.environ.get("ZERO_SHOT_SAVE_TO", "models/qwen3-4b-instruct-2507")
-DEFAULT_DEVICE = os.environ.get("ZERO_SHOT_DEVICE", "cpu")
+DEFAULT_DEVICE = os.environ.get("ZERO_SHOT_DEVICE", "auto")
 DEFAULT_GPU = os.environ.get("ZERO_SHOT_GPU", "rtx_5060_ti")
 
 # GPUs we know how to run on. Compute capability / CUDA are informational; the
@@ -70,6 +70,18 @@ class Config:
         if not path.is_absolute():
             path = self.base_dir / path
         return str(path)
+
+    def save_to_for(self, model_id: str) -> str | None:
+        """Local dir for `model_id`: the configured one for the default model,
+        otherwise a sibling directory named after the model. None disables disk
+        caching (use the Hugging Face cache)."""
+        if model_id == self.model:
+            return self.resolve_save_to()
+        if not self.save_to:
+            return None
+        base = self.local_dir
+        parent = base.parent if base else (self.base_dir / "models")
+        return str(parent / model_id.replace("/", "--"))
 
 
 def load_config(path: str | Path | None = None) -> Config:
