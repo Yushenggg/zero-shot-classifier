@@ -55,8 +55,28 @@ score(option) = log P(option | context, cue) − log P(option | "N/A", cue)
 
 This removes digital/yes-no/token-length bias; it roughly doubles scoring time
 (two passes). Disable with `--no-calibrate` or `calibrate = false`. It does not
-change the chosen option's *order* bias (we don't list options) nor correct
-length-preference between differently long keys.
+correct length-preference between differently long keys.
+
+### Criteria-order bias
+
+For `choice` questions the prompt includes a `# CRITERIA` block listing each key
+with its description, so the model sees what each option means before it scores
+the key as a continuation. The keys themselves are still scored independently,
+so there is no positional bias *between options* — but the order in which the
+criteria are listed can still prime the model.
+
+Measured on Qwen3-4B with the payouts example (state: "Help! My payouts have
+been failing for 3 days.", `criteria` for `department`):
+
+| option | calibrated logprob, order A (billing, technical, sales) | order B (sales, technical, billing) | Δ |
+|---|---|---|---|
+| billing  | +1.25 | +3.91 | +2.67 |
+| technical | -3.05 | +1.31 | **+4.36** |
+| sales    | -12.50 | -14.89 | -2.39 |
+
+Winner is unchanged (`billing`) but `technical` flips sign on its calibrated
+score, and `confidence` shifts from 0.97 to 0.87. Take note if you are near the
+decision boundary.
 
 ## CPU vs GPU
 

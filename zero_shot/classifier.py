@@ -101,8 +101,15 @@ def _build_question(name: str, spec: dict[str, Any], state: Any) -> tuple[str, l
         criteria = spec.get("criteria") or {}
         if not criteria:
             raise ValueError(f"Question '{name}' (choice) needs a non-empty criteria map")
+        criteria_lines = [
+            f"{key}: {_render(desc)}" for key, desc in criteria.items() if _render(desc)
+        ]
+        criteria_block = (
+            f"# CRITERIA\n" + "\n".join(criteria_lines) + "\n\n" if criteria_lines else ""
+        )
         prompt = (
             header
+            + criteria_block
             + "# ANSWER\nRespond with exactly one option key and nothing else.\n"
             + f'The best option for "{name}" is:'
         )
@@ -255,9 +262,12 @@ def classify(
         score:  {"type": "score", "instructions": "...",
                  "criteria": ["Calm", "Frustrated", "Very angry"]} # 2-10 ordered levels
 
-    Candidate keys are scored directly and are not listed in the prompt. With
-    `calibrate=True`, each option's content-free prior (from `calibration_context`)
-    is subtracted before the softmax, removing surface-form/option bias.
+    Candidate keys are scored directly. For `choice`, the prompt includes a
+    `# CRITERIA` block listing each key and its description so the model sees
+    what each key means, but only the key itself is used as the scored
+    continuation. With `calibrate=True`, each option's content-free prior (from
+    `calibration_context`) is subtracted before the softmax, removing
+    surface-form/option bias.
     """
     if not isinstance(question, dict) or not question:
         raise ValueError("question must be a non-empty JSON object")
