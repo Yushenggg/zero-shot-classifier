@@ -8,7 +8,7 @@
 # image gets the matching PyTorch wheel (+ its CUDA deps only in GPU builds).
 # The CUDA userspace libs come from the wheel; only the host driver is injected
 # by the NVIDIA Container Toolkit at run time.
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 ARG TORCH_BACKEND=cpu
 

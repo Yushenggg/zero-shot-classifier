@@ -5,10 +5,22 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-DEFAULT_MODEL_ID = os.environ.get("ZERO_SHOT_MODEL", "Qwen/Qwen3-4B-Instruct-2507")
-DEFAULT_SAVE_TO: str | None = os.environ.get("ZERO_SHOT_SAVE_TO", "models/qwen3-4b-instruct-2507")
-DEFAULT_DEVICE = os.environ.get("ZERO_SHOT_DEVICE", "auto")
-DEFAULT_GPU = os.environ.get("ZERO_SHOT_GPU", "rtx_5060_ti")
+DEFAULT_MODEL_ID = "Qwen/Qwen3-4B-Instruct-2507"
+DEFAULT_SAVE_TO: str | None = "models/qwen3-4b-instruct-2507"
+DEFAULT_DEVICE = "auto"
+DEFAULT_GPU = "rtx_5060_ti"
+DEFAULT_QUANTIZE = "auto"
+QUANTIZE_MODES = ("auto", "bf16", "fp32", "int8")
+
+# Env vars override the config file (and the built-in defaults), matching the
+# README. Precedence: $ZERO_SHOT_* > config file > default.
+_ENV_KEYS = {
+    "model": "ZERO_SHOT_MODEL",
+    "save_to": "ZERO_SHOT_SAVE_TO",
+    "device": "ZERO_SHOT_DEVICE",
+    "gpu": "ZERO_SHOT_GPU",
+    "quantize": "ZERO_SHOT_QUANTIZE",
+}
 
 # GPUs we know how to run on. Compute capability / CUDA are informational; the
 # name is checked against torch.cuda.get_device_name() when device = "gpu".
@@ -41,6 +53,11 @@ def _clean(value: object) -> str | None:
     return None if text.strip().lower() in ("", "null", "none") else text
 
 
+def _env_override(key: str) -> str | None:
+    """Return the $ZERO_SHOT_* value for `key`, or None if unset/empty."""
+    return _clean(os.environ.get(_ENV_KEYS[key]))
+
+
 @dataclass
 class Config:
     """Model settings loaded from a TOML config file.
@@ -54,6 +71,7 @@ class Config:
     save_to: str | None = DEFAULT_SAVE_TO
     device: str = DEFAULT_DEVICE
     gpu: str = DEFAULT_GPU
+    quantize: str = DEFAULT_QUANTIZE
     kv_cache: bool = True
     temperature: float = 1.0
     calibrate: bool = True
@@ -93,21 +111,38 @@ def load_config(path: str | Path | None = None) -> Config:
     Missing file or keys fall back to the built-in defaults.
     """
     config_path = Path(path) if path else _default_config_path()
-    if not config_path.exists():
-        return Config(base_dir=Path.cwd())
+    if config_path.exists():
+        data = tomllib.loads(config_path.read_text())
+        base_dir = config_path.resolve().parent
+    else:
+        data = {}
+        base_dir = Path.cwd()
 
-    data = tomllib.loads(config_path.read_text())
+    def pick(key: str, default: object) -> object:
+        env = _env_override(key)
+        if env is not None:
+            return env
+        if data.get(key) is not None:
+            return data[key]
+        return default
+
     temperature = float(data.get("temperature", 1.0))
     if temperature <= 0:
         raise ValueError(f"config temperature must be > 0, got {temperature}")
+    quantize = str(pick("quantize", DEFAULT_QUANTIZE)).strip().lower()
+    if quantize not in QUANTIZE_MODES:
+        raise ValueError(
+            f"config quantize must be one of {QUANTIZE_MODES}, got {quantize!r}"
+        )
     return Config(
-        model=str(data.get("model", DEFAULT_MODEL_ID)),
-        save_to=_clean(data.get("save_to", DEFAULT_SAVE_TO)),
-        device=str(data.get("device", DEFAULT_DEVICE)).strip().lower(),
-        gpu=str(data.get("gpu", DEFAULT_GPU)),
+        model=str(pick("model", DEFAULT_MODEL_ID)),
+        save_to=_clean(pick("save_to", DEFAULT_SAVE_TO)),
+        device=str(pick("device", DEFAULT_DEVICE)).strip().lower(),
+        gpu=str(pick("gpu", DEFAULT_GPU)),
+        quantize=quantize,
         kv_cache=bool(data.get("kv_cache", True)),
         temperature=temperature,
         calibrate=bool(data.get("calibrate", True)),
         calibration_context=str(data.get("calibration_context", "N/A")),
-        base_dir=config_path.resolve().parent,
+        base_dir=base_dir,
     )

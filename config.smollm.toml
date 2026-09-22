@@ -7,6 +7,9 @@ device = "cpu"
 
 gpu = "rtx_5060_ti"
 
+# bf16 where hardware-accelerated, else fp32 (e.g. Intel laptops). See config.toml.
+quantize = "auto"
+
 kv_cache = true
 
 temperature = 1.0

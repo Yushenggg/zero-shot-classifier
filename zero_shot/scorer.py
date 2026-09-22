@@ -12,6 +12,72 @@ logger = logging.getLogger(__name__)
 
 _MIN_AVAILABLE_GB = 9.0
 
+_QUANTIZE_MODES = ("auto", "bf16", "fp32", "int8")
+
+
+def _cpu_has_hw_bf16() -> bool:
+    """True if the CPU has hardware bfloat16 (AVX512_BF16 or AMX_BF16).
+
+    Without it PyTorch emulates bf16, which is much slower than fp32 on Intel
+    consumer chips since 12th gen (AVX-512 is fused off there).
+    """
+    import torch
+
+    if torch.backends.cpu.get_cpu_capability() != "AVX512":
+        return False
+    try:
+        flags = Path("/proc/cpuinfo").read_text()
+    except OSError:
+        return True  # can't read flags; assume AVX-512 implies BF16
+    return "avx512_bf16" in flags or "amx_bf16" in flags
+
+
+def resolve_precision(device: str, quantize: str = "auto") -> tuple[str, bool]:
+    """Return ``(dtype_name, quantized)`` for a run.
+
+    - ``auto``: bf16 when the device has hardware bf16 (CUDA, or a CPU with
+      AVX512_BF16/AMX), otherwise fp32 on CPU (avoids PyTorch's slow bf16
+      emulation).
+    - ``bf16`` / ``fp32``: force that dtype.
+    - ``int8``: dynamic int8 quantization on CPU (loaded as fp32). CUDA is never
+      quantized.
+    """
+    mode = (quantize or "auto").strip().lower()
+    if mode == "none":  # alias for the pre-existing default
+        mode = "bf16"
+    if mode not in _QUANTIZE_MODES:
+        raise ValueError(f"Unknown quantize {quantize!r}; use one of {_QUANTIZE_MODES}.")
+
+    import torch
+
+    resolved = (device or "auto").strip().lower()
+    is_cpu = resolved == "cpu" or (resolved == "auto" and not torch.cuda.is_available())
+
+    if mode == "fp32":
+        return ("float32", False)
+    if mode == "bf16":
+        return ("bfloat16", False)
+    if mode == "int8":
+        return ("float32", True) if is_cpu else ("bfloat16", False)
+    # auto
+    if not is_cpu:
+        return ("bfloat16", False)
+    return ("bfloat16", False) if _cpu_has_hw_bf16() else ("float32", False)
+
+
+def _quantize_dynamic(model):
+    """Quantize Linear layers to int8 (dynamic). No-op if torch.ao is missing."""
+    import warnings
+
+    import torch
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return torch.ao.quantization.quantize_dynamic(
+            model, {torch.nn.Linear}, dtype=torch.qint8
+        )
+
+
 # Files we need for text scoring (the big safetensors + configs/tokenizer).
 _MODEL_PATTERNS = ["*.json", "*.safetensors", "*.jinja"]
 
@@ -116,6 +182,7 @@ class Scorer:
         model_id: str = DEFAULT_MODEL_ID,
         save_to: str | None = None,
         device: str = "cpu",
+        quantize: str = "auto",
     ) -> None:
         if device == "cpu":
             try:
@@ -156,9 +223,15 @@ class Scorer:
         if model_cls is None:
             model_cls = transformers.AutoModelForCausalLM
 
+        # Dynamic int8 quantized layers expect float32 activations, so load fp32
+        # (then quantize) instead of bf16 when quantizing.
+        self.dtype_name, self.quantized = resolve_precision(device, quantize)
+        load_dtype = (
+            torch.float32 if self.dtype_name == "float32" else torch.bfloat16
+        )
         model = model_cls.from_pretrained(
             source,
-            dtype=torch.bfloat16,
+            dtype=load_dtype,
             device_map=device,
             local_files_only=from_disk,
         )
@@ -166,17 +239,25 @@ class Scorer:
         # Text-only scoring: pull the language decoder + output head out of the
         # (possibly multimodal) model and drop the unused towers to save memory.
         base = getattr(model, "model", model)
-        self.language_model = getattr(base, "language_model", base)
-        self.lm_head = model.get_output_embeddings() or getattr(model, "lm_head", None)
-        if self.lm_head is None:
-            raise RuntimeError(f"Could not find an output LM head on {type(model).__name__}.")
-
         for attr in ("vision_tower", "audio_tower", "embed_vision", "embed_audio", "visual"):
             if getattr(base, attr, None) is not None:
                 setattr(base, attr, None)
         for attr in ("mtp",):
             if getattr(model, attr, None) is not None:
                 setattr(model, attr, None)
+
+        if self.quantized:
+            logger.info(
+                "Quantizing %s Linear layers to int8 (dynamic).",
+                type(model).__name__,
+            )
+            model = _quantize_dynamic(model)
+
+        self.language_model = getattr(base, "language_model", base)
+        self.lm_head = model.get_output_embeddings() or getattr(model, "lm_head", None)
+        if self.lm_head is None:
+            raise RuntimeError(f"Could not find an output LM head on {type(model).__name__}.")
+
         model.eval()
         self._model = model
 
@@ -349,7 +430,7 @@ class Scorer:
         return results
 
 
-_SCORERS: dict[tuple[str, str | None, str], Scorer] = {}
+_SCORERS: dict[tuple[str, str | None, str, str, bool], Scorer] = {}
 _LOCK = threading.Lock()
 
 
@@ -358,13 +439,17 @@ def get_scorer(
     save_to: str | None = None,
     device: str = "cpu",
     gpu: str | None = None,
+    quantize: str = "auto",
 ) -> Scorer:
-    """Load (once) and cache a scorer per (model, save dir, resolved device)."""
+    """Load (once) and cache a scorer per (model, save dir, resolved device, precision)."""
     resolved = resolve_device(device, gpu)
-    key = (model_id, str(save_to) if save_to else None, resolved)
+    dtype_name, quantized = resolve_precision(resolved, quantize)
+    key = (model_id, str(save_to) if save_to else None, resolved, dtype_name, quantized)
     with _LOCK:
         if key not in _SCORERS:
-            _SCORERS[key] = Scorer(model_id, save_to=save_to, device=resolved)
+            _SCORERS[key] = Scorer(
+                model_id, save_to=save_to, device=resolved, quantize=quantize
+            )
         return _SCORERS[key]
 
 

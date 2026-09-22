@@ -167,13 +167,14 @@ def classify_one(
     save_to: str | None = None,
     device: str = "cpu",
     gpu: str | None = None,
+    quantize: str = "auto",
     temperature: float = 1.0,
     use_kv_cache: bool = False,
     calibrate: bool = False,
     calibration_context: str = "N/A",
 ) -> Classification:
     prompt, options = _build_question(name, spec, state)
-    scorer = get_scorer(model_id, save_to=save_to, device=device, gpu=gpu)
+    scorer = get_scorer(model_id, save_to=save_to, device=device, gpu=gpu, quantize=quantize)
     texts = [text for _, text in options]
     sequence_scores: list[SequenceScore] = scorer.score_options(
         prompt, texts, use_kv_cache=use_kv_cache
@@ -246,6 +247,7 @@ def classify(
     save_to: str | None = None,
     device: str = "cpu",
     gpu: str | None = None,
+    quantize: str = "auto",
     temperature: float = 1.0,
     use_kv_cache: bool = False,
     calibrate: bool = False,
@@ -280,6 +282,7 @@ def classify(
             save_to=save_to,
             device=device,
             gpu=gpu,
+            quantize=quantize,
             temperature=temperature,
             use_kv_cache=use_kv_cache,
             calibrate=calibrate,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import logging
 import os
 import time
@@ -27,11 +28,12 @@ _RESOLVED_DEVICE: str | None = None
 async def lifespan(app: FastAPI):
     global _RESOLVED_DEVICE
     logger.info(
-        "Loading model %s on device=%s (gpu=%s, kv_cache=%s) ...",
+        "Loading model %s on device=%s (gpu=%s, kv_cache=%s, quantize=%s) ...",
         CONFIG.model,
         CONFIG.device,
         CONFIG.gpu,
         CONFIG.kv_cache,
+        CONFIG.quantize,
     )
     try:
         scorer = get_scorer(
@@ -39,6 +41,7 @@ async def lifespan(app: FastAPI):
             save_to=CONFIG.resolve_save_to(),
             device=CONFIG.device,
             gpu=CONFIG.gpu,
+            quantize=CONFIG.quantize,
         )
         _RESOLVED_DEVICE = scorer.device
         logger.info("Model ready: %s on %s", type(scorer._model).__name__, scorer.device)
@@ -74,6 +77,7 @@ def health() -> dict[str, Any]:
         "model_id": CONFIG.model,
         "device": _RESOLVED_DEVICE or CONFIG.device,
         "gpu": CONFIG.gpu,
+        "quantize": CONFIG.quantize,
         "kv_cache": CONFIG.kv_cache,
         "temperature": CONFIG.temperature,
         "calibrate": CONFIG.calibrate,
@@ -98,6 +102,7 @@ def classify_endpoint(request: ClassifyRequest) -> JSONResponse:
             save_to=CONFIG.save_to_for(model_id),
             device=CONFIG.device,
             gpu=CONFIG.gpu,
+            quantize=CONFIG.quantize,
             temperature=request.temperature if request.temperature is not None else CONFIG.temperature,
             use_kv_cache=request.kv_cache if request.kv_cache is not None else CONFIG.kv_cache,
             calibrate=request.calibrate if request.calibrate is not None else CONFIG.calibrate,
@@ -123,10 +128,37 @@ def classify_endpoint(request: ClassifyRequest) -> JSONResponse:
     )
 
 
-def main() -> None:
+def _cpu_low_config_path() -> Path:
+    """Locate the bundled config.smollm.toml (project root or cwd)."""
+    candidate = Path(__file__).resolve().parent.parent / "config.smollm.toml"
+    return candidate if candidate.exists() else Path.cwd() / "config.smollm.toml"
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        prog="zero-shot-serve",
+        description="Serve the zero-shot classifier web UI and HTTP API.",
+    )
+    parser.add_argument(
+        "--cpu-low",
+        action="store_true",
+        help="Serve the small CPU model (config.smollm.toml) instead of the configured one.",
+    )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Bind port (default: $ZERO_SHOT_PORT or 8000).",
+    )
+    args = parser.parse_args(argv)
+
+    global CONFIG
+    if args.cpu_low:
+        CONFIG = load_config(_cpu_low_config_path())
+
     host = os.environ.get("ZERO_SHOT_HOST", "127.0.0.1")
-    port = int(os.environ.get("ZERO_SHOT_PORT", "8000"))
-    uvicorn.run("zero_shot.server:app", host=host, port=port, reload=False)
+    port = args.port if args.port is not None else int(os.environ.get("ZERO_SHOT_PORT", "8000"))
+    uvicorn.run(app, host=host, port=port, reload=False)
 
 
 if __name__ == "__main__":

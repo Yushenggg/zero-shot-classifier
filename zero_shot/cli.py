@@ -99,6 +99,13 @@ def main(argv: list[str] | None = None) -> int:
         help="GPU id (e.g. rtx_5060_ti) used to validate GPU mode. Overrides the config file.",
     )
     parser.add_argument(
+        "--quantize",
+        default=None,
+        choices=("auto", "bf16", "fp32", "int8"),
+        help="Compute precision: 'auto' (bf16 where hardware-accelerated, else "
+        "fp32), 'bf16', 'fp32', or 'int8' dynamic quantization. Overrides the config file.",
+    )
+    parser.add_argument(
         "--temperature",
         type=float,
         default=None,
@@ -148,6 +155,7 @@ def main(argv: list[str] | None = None) -> int:
     save_to = config.resolve_save_to(args.save_to)
     device = args.device or config.device
     gpu = args.gpu or config.gpu
+    quantize = args.quantize or config.quantize
     use_kv_cache = config.kv_cache if args.kv_cache is None else args.kv_cache
     temperature = args.temperature if args.temperature is not None else config.temperature
     calibrate = config.calibrate if args.calibrate is None else args.calibrate
@@ -166,6 +174,7 @@ def main(argv: list[str] | None = None) -> int:
             save_to=save_to,
             device=device,
             gpu=gpu,
+            quantize=quantize,
             temperature=temperature,
             use_kv_cache=use_kv_cache,
             calibrate=calibrate,
