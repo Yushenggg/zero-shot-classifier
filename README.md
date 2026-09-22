@@ -22,6 +22,7 @@ model = "Qwen/Qwen3-4B-Instruct-2507"
 save_to = "models/qwen3-4b-instruct-2507"   # loaded from disk after first download
 device = "auto"                       # auto | cpu | gpu
 gpu = "rtx_5060_ti"                   # which GPU when device = "gpu"
+quantize = "auto"                     # auto | bf16 | fp32 | int8
 kv_cache = true                       # reuse one KV cache for the shared prompt
 temperature = 1.0                     # option softmax; >1 less certain, <1 sharper
 calibrate = true                      # subtract content-free option priors
@@ -95,6 +96,18 @@ uv pip install --reinstall -r requirements-gpu.txt   # restore the CUDA build
 `device = "auto"` uses the GPU when available and falls back to CPU otherwise. Set
 `device = "gpu"` to require the GPU (validated against `gpu`, currently
 `rtx_5060_ti`), or `device = "cpu"` to force CPU.
+
+### CPU precision (`quantize`)
+
+`quantize = "auto"` uses **bf16** where it is hardware-accelerated — CUDA, or a
+CPU advertising `AVX512_BF16`/`AMX_BF16` (e.g. AMD Zen 4/5) — and **fp32**
+otherwise. This matters on Intel consumer CPUs since 12th gen (Alder Lake on),
+where AVX-512 is fused off: PyTorch then *emulates* bf16, which is several times
+slower than fp32 (the SmolLM2 CPU image can take seconds per request there).
+`quantize = "fp32"` or `"bf16"` forces a dtype, and `"int8"` applies dynamic
+quantization on CPU — faster on AVX2+VNNI and ~4x less RAM, but it perturbs
+logprobs, so near-tie predictions can shift. CUDA is never quantized. Overridable
+with `--quantize` or `$ZERO_SHOT_QUANTIZE`.
 
 ## Usage
 

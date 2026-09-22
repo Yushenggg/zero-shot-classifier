@@ -5,7 +5,7 @@ description = "Zero-shot classifier using the full next-token distribution of a 
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "accelerate>=1.15.0",
     "fastapi>=0.141.1",

@@ -9,6 +9,8 @@ DEFAULT_MODEL_ID = os.environ.get("ZERO_SHOT_MODEL", "Qwen/Qwen3-4B-Instruct-250
 DEFAULT_SAVE_TO: str | None = os.environ.get("ZERO_SHOT_SAVE_TO", "models/qwen3-4b-instruct-2507")
 DEFAULT_DEVICE = os.environ.get("ZERO_SHOT_DEVICE", "auto")
 DEFAULT_GPU = os.environ.get("ZERO_SHOT_GPU", "rtx_5060_ti")
+DEFAULT_QUANTIZE = os.environ.get("ZERO_SHOT_QUANTIZE", "auto")
+QUANTIZE_MODES = ("auto", "bf16", "fp32", "int8")
 
 # GPUs we know how to run on. Compute capability / CUDA are informational; the
 # name is checked against torch.cuda.get_device_name() when device = "gpu".
@@ -54,6 +56,7 @@ class Config:
     save_to: str | None = DEFAULT_SAVE_TO
     device: str = DEFAULT_DEVICE
     gpu: str = DEFAULT_GPU
+    quantize: str = DEFAULT_QUANTIZE
     kv_cache: bool = True
     temperature: float = 1.0
     calibrate: bool = True
@@ -100,11 +103,17 @@ def load_config(path: str | Path | None = None) -> Config:
     temperature = float(data.get("temperature", 1.0))
     if temperature <= 0:
         raise ValueError(f"config temperature must be > 0, got {temperature}")
+    quantize = str(data.get("quantize", DEFAULT_QUANTIZE)).strip().lower()
+    if quantize not in QUANTIZE_MODES:
+        raise ValueError(
+            f"config quantize must be one of {QUANTIZE_MODES}, got {quantize!r}"
+        )
     return Config(
         model=str(data.get("model", DEFAULT_MODEL_ID)),
         save_to=_clean(data.get("save_to", DEFAULT_SAVE_TO)),
         device=str(data.get("device", DEFAULT_DEVICE)).strip().lower(),
         gpu=str(data.get("gpu", DEFAULT_GPU)),
+        quantize=quantize,
         kv_cache=bool(data.get("kv_cache", True)),
         temperature=temperature,
         calibrate=bool(data.get("calibrate", True)),

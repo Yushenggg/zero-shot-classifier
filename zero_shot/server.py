@@ -27,11 +27,12 @@ _RESOLVED_DEVICE: str | None = None
 async def lifespan(app: FastAPI):
     global _RESOLVED_DEVICE
     logger.info(
-        "Loading model %s on device=%s (gpu=%s, kv_cache=%s) ...",
+        "Loading model %s on device=%s (gpu=%s, kv_cache=%s, quantize=%s) ...",
         CONFIG.model,
         CONFIG.device,
         CONFIG.gpu,
         CONFIG.kv_cache,
+        CONFIG.quantize,
     )
     try:
         scorer = get_scorer(
@@ -39,6 +40,7 @@ async def lifespan(app: FastAPI):
             save_to=CONFIG.resolve_save_to(),
             device=CONFIG.device,
             gpu=CONFIG.gpu,
+            quantize=CONFIG.quantize,
         )
         _RESOLVED_DEVICE = scorer.device
         logger.info("Model ready: %s on %s", type(scorer._model).__name__, scorer.device)
@@ -74,6 +76,7 @@ def health() -> dict[str, Any]:
         "model_id": CONFIG.model,
         "device": _RESOLVED_DEVICE or CONFIG.device,
         "gpu": CONFIG.gpu,
+        "quantize": CONFIG.quantize,
         "kv_cache": CONFIG.kv_cache,
         "temperature": CONFIG.temperature,
         "calibrate": CONFIG.calibrate,
@@ -98,6 +101,7 @@ def classify_endpoint(request: ClassifyRequest) -> JSONResponse:
             save_to=CONFIG.save_to_for(model_id),
             device=CONFIG.device,
             gpu=CONFIG.gpu,
+            quantize=CONFIG.quantize,
             temperature=request.temperature if request.temperature is not None else CONFIG.temperature,
             use_kv_cache=request.kv_cache if request.kv_cache is not None else CONFIG.kv_cache,
             calibrate=request.calibrate if request.calibrate is not None else CONFIG.calibrate,

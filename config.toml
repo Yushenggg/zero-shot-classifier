@@ -17,6 +17,14 @@ device = "auto"
 # Which GPU to run on when device = "gpu". Supported: "rtx_5060_ti".
 gpu = "rtx_5060_ti"
 
+# Compute precision. "auto" uses bf16 where it is hardware-accelerated (CUDA,
+# or a CPU with AVX512_BF16/AMX such as Zen 4/5) and fp32 otherwise, so Intel
+# consumer CPUs (12th gen+, no AVX-512) avoid PyTorch's slow bf16 emulation.
+# "bf16"/"fp32" force a dtype; "int8" applies dynamic quantization on CPU
+# (faster on AVX2+VNNI and ~4x less RAM, but perturbs logprobs so near-tie
+# predictions can shift). CUDA is never quantized.
+quantize = "auto"
+
 # Reuse one KV cache for the shared prompt across options (~4x faster).
 # On by default. Approximate: uses the cached attention path, so rare near-tie
 # tokens can shift. If a model can't reuse its cache, the scorer falls back to
