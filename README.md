@@ -121,11 +121,14 @@ with `--quantize` or `$ZERO_SHOT_QUANTIZE`.
 # force the exact (non-KV) path
 .venv/bin/zero-shot -q examples/color_question.json -s examples/color_state.json --no-kv-cache
 
-.venv/bin/zero-shot-serve   # web UI at http://127.0.0.1:8000
+.venv/bin/zero-shot-serve            # web UI at http://127.0.0.1:8000
+.venv/bin/zero-shot-serve --cpu-low  # small CPU model (config.smollm.toml)
 ```
 
-The server preloads the configured model at startup and logs the device, so you can
-confirm whether it is running on CPU or GPU.
+`--cpu-low` serves SmolLM2-360M on CPU from `config.smollm.toml` — handy on a
+laptop with no GPU, where the default Qwen3-4B would be slow. The server preloads
+the configured model at startup and logs the device, so you can confirm whether it
+is running on CPU or GPU.
 
 ### HTTP API
 

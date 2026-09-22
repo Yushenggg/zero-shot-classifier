@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import logging
 import os
 import time
@@ -127,10 +128,31 @@ def classify_endpoint(request: ClassifyRequest) -> JSONResponse:
     )
 
 
-def main() -> None:
+def _cpu_low_config_path() -> Path:
+    """Locate the bundled config.smollm.toml (project root or cwd)."""
+    candidate = Path(__file__).resolve().parent.parent / "config.smollm.toml"
+    return candidate if candidate.exists() else Path.cwd() / "config.smollm.toml"
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(
+        prog="zero-shot-serve",
+        description="Serve the zero-shot classifier web UI and HTTP API.",
+    )
+    parser.add_argument(
+        "--cpu-low",
+        action="store_true",
+        help="Serve the small CPU model (config.smollm.toml) instead of the configured one.",
+    )
+    args = parser.parse_args(argv)
+
+    global CONFIG
+    if args.cpu_low:
+        CONFIG = load_config(_cpu_low_config_path())
+
     host = os.environ.get("ZERO_SHOT_HOST", "127.0.0.1")
     port = int(os.environ.get("ZERO_SHOT_PORT", "8000"))
-    uvicorn.run("zero_shot.server:app", host=host, port=port, reload=False)
+    uvicorn.run(app, host=host, port=port, reload=False)
 
 
 if __name__ == "__main__":
