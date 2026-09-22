@@ -144,6 +144,12 @@ def main(argv: list[str] | None = None) -> None:
         action="store_true",
         help="Serve the small CPU model (config.smollm.toml) instead of the configured one.",
     )
+    parser.add_argument(
+        "--port",
+        type=int,
+        default=None,
+        help="Bind port (default: $ZERO_SHOT_PORT or 8000).",
+    )
     args = parser.parse_args(argv)
 
     global CONFIG
@@ -151,7 +157,7 @@ def main(argv: list[str] | None = None) -> None:
         CONFIG = load_config(_cpu_low_config_path())
 
     host = os.environ.get("ZERO_SHOT_HOST", "127.0.0.1")
-    port = int(os.environ.get("ZERO_SHOT_PORT", "8000"))
+    port = args.port if args.port is not None else int(os.environ.get("ZERO_SHOT_PORT", "8000"))
     uvicorn.run(app, host=host, port=port, reload=False)
 
 
