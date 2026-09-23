@@ -220,6 +220,13 @@ def classify_one(
             )
     _softmax(scores, temperature)
 
+    # Vision scoring allocates a fresh KV cache (and large prefill outputs) per
+    # request. PyTorch's CUDA caching allocator doesn't return freed blocks to
+    # the GPU on its own, so nvidia-smi keeps showing the high-water mark across
+    # requests and the next image can OOM. empty_cache() forces the return.
+    if image is not None and scorer.device == "cuda":
+        scorer.torch.cuda.empty_cache()
+
     input_tokens = scorer.count_input_tokens(prompt, image)
     ranked = [s for s in scores if s.logprob is not None]
     winner = max(ranked, key=lambda s: s.probability) if ranked else None

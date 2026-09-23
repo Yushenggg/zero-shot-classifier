@@ -406,7 +406,12 @@ class Scorer:
             prefix_logprobs = torch.log_softmax(
                 self.lm_head(prefill.last_hidden_state[:, -1:, :])[0].float(), dim=-1
             )[0]
-        cache = prefill.past_key_values
+            cache = prefill.past_key_values
+            # Drop the full prefill output (last_hidden_state/logits + ModelOutput
+            # wrapper) before the per-option loop. Without this, the full hidden
+            # state for the whole prefix stays live for every option and the loop
+            # allocations pile on top.
+            del prefill
         if cache is None or not hasattr(cache, "crop"):
             raise RuntimeError(
                 f"{type(self.language_model).__name__} did not return a reusable KV cache"
@@ -701,7 +706,11 @@ class Scorer:
             prefix_logprobs = torch.log_softmax(
                 prefill.logits[0, -1:, :].float(), dim=-1
             )[0]
-        cache = prefill.past_key_values
+            cache = prefill.past_key_values
+            # Drop the full prefill output (logits + ModelOutput wrapper) before
+            # the per-option loop. The full vocab logits for the whole prefix
+            # otherwise stays live for every option.
+            del prefill
         if cache is None or not hasattr(cache, "crop"):
             raise RuntimeError(
                 f"{type(model).__name__} did not return a reusable KV cache"
