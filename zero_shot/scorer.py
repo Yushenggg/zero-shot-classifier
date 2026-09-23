@@ -13,6 +13,11 @@ logger = logging.getLogger(__name__)
 
 _MIN_AVAILABLE_GB = 9.0
 
+# Cached and exact vision scoring differ only by attention/GEMM shapes (~0.05-0.4
+# nats on near-tie tokens), so a correct position/rope setup stays far below this.
+# A model whose multimodal positions we mishandle diverges by several nats.
+_VISION_CACHE_TOLERANCE_NATS = 1.0
+
 _QUANTIZE_MODES = ("auto", "bf16", "fp32", "int8")
 
 
@@ -185,13 +190,6 @@ class Scorer:
         import transformers
         from transformers import AutoConfig, AutoProcessor, AutoTokenizer
 
-        if device.startswith("cuda"):
-            vram_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
-            if vram_gb < 11.0:
-                raise RuntimeError(
-                    f"GPU has only {vram_gb:.1f} GB VRAM; the model needs about 11 GB."
-                )
-
         source, from_disk = resolve_model_dir(model_id, save_to)
 
         self.torch = torch
@@ -219,7 +217,13 @@ class Scorer:
         self.processor = None
         try:
             self.processor = AutoProcessor.from_pretrained(source, local_files_only=from_disk)
-        except Exception:  # noqa: BLE001 - text-only models have no processor
+        except Exception as exc:  # noqa: BLE001 - text-only models have no processor
+            logger.info(
+                "No processor for %s (%s: %s); treating as text-only.",
+                model_id,
+                type(exc).__name__,
+                exc,
+            )
             self.processor = None
         self.multimodal = getattr(self.processor, "image_processor", None) is not None
 
@@ -561,9 +565,51 @@ class Scorer:
                     exc,
                 )
             else:
+                if self._vision_kv_cache_ok is None:
+                    # First vision call this run: confirm the cached path agrees
+                    # with exact scoring before trusting it for the rest. A model
+                    # whose multimodal positions we mishandle (e.g. an M-RoPE
+                    # variant without `compute_3d_position_ids`) shows up here as
+                    # a large gap instead of silently wrong logprobs.
+                    exact = self._vision_exact(
+                        prefix_text, options, add_leading_space, image
+                    )
+                    delta = self._vision_cache_delta(result, exact)
+                    if delta > _VISION_CACHE_TOLERANCE_NATS:
+                        self._vision_kv_cache_ok = False
+                        logger.warning(
+                            "Vision KV cache disagreed with exact scoring for %s "
+                            "(max Δ%.3f nats > %.1f); using the exact path. This "
+                            "usually means the model's multimodal position handling "
+                            "is not supported.",
+                            type(self._model).__name__,
+                            delta,
+                            _VISION_CACHE_TOLERANCE_NATS,
+                        )
+                        return exact
                 self._vision_kv_cache_ok = True
                 return result
         return self._vision_exact(prefix_text, options, add_leading_space, image)
+
+    @staticmethod
+    def _vision_cache_delta(
+        cached: list[SequenceScore], exact: list[SequenceScore]
+    ) -> float:
+        """Largest per-token logprob gap between the cached and exact paths.
+
+        Returns ``inf`` when the two disagree on tokenization, so the caller
+        falls back to the exact path.
+        """
+        if len(cached) != len(exact):
+            return float("inf")
+        worst = 0.0
+        for c, e in zip(cached, exact):
+            if [t.token_id for t in c.tokens] != [t.token_id for t in e.tokens]:
+                return float("inf")
+            for ct, et in zip(c.tokens, e.tokens):
+                worst = max(worst, abs(ct.logprob - et.logprob))
+            worst = max(worst, abs(c.eos_logprob - e.eos_logprob))
+        return worst
 
     def _vision_exact(
         self, prefix_text: str, options: list[str], add_leading_space: bool, image: Any
