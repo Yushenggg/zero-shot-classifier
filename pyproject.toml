@@ -24,12 +24,30 @@ dependencies = [
 zero-shot = "zero_shot.interfaces.cli.main:main"
 zero-shot-serve = "zero_shot.interfaces.server.main:main"
 
+[dependency-groups]
+dev = ["ruff>=0.16"]
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["zero_shot"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["zero_shot"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "BLE"]
+
+[tool.ruff.lint.per-file-ignores]
+# FastAPI's File()/Form(...) in argument defaults are the documented idiom.
+"zero_shot/interfaces/server/app.py" = ["B008"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["zero_shot"]
 
 # `uv sync` installs the CUDA build of PyTorch by default (from PyPI).
 # On a machine without a GPU, switch to the CPU-only build instead:

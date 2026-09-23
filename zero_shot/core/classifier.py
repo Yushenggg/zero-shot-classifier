@@ -11,7 +11,6 @@ from .models import (
     NoulQuestion,
     OptionScore,
     QuestionSpec,
-    ScoreQuestion,
     SequenceScore,
     parse_question,
     parse_questions,
@@ -52,7 +51,7 @@ def _build_question(
             f"{key}: {_render(desc)}" for key, desc in spec.criteria.items() if _render(desc)
         ]
         criteria_block = (
-            f"# CRITERIA\n" + "\n".join(criteria_lines) + "\n\n" if criteria_lines else ""
+            "# CRITERIA\n" + "\n".join(criteria_lines) + "\n\n" if criteria_lines else ""
         )
         prompt = (
             header
@@ -97,7 +96,7 @@ def _softmax(scores: list[OptionScore], temperature: float) -> None:
     peak = max(_effective_logprob(s) for s in known)
     weights = [math.exp((_effective_logprob(s) - peak) / temperature) for s in known]
     total = sum(weights)
-    for score, weight in zip(known, weights):
+    for score, weight in zip(known, weights, strict=True):
         score.probability = weight / total
 
 

@@ -21,6 +21,7 @@ Vision-language is the default; text and image requests share one scoring path.
 - `.venv/bin/zero-shot-serve --cpu-low` — serve the CPU preset
 - `.venv/bin/zero-shot-serve --config <path>` — serve an arbitrary config
 - `.venv/bin/zero-shot -q <questions.json> -s <state.json> [-i <image>]` — classify from the CLI
+- `uvx ruff@0.16.8 check` — lint the tree (config in `pyproject.toml`; CI pins the same version and runs on PRs and pushes to `main`)
 
 ## Conventions
 - Model weights live in `./models/<short-name>/` and are loaded with

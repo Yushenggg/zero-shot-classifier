@@ -90,7 +90,11 @@ async def lifespan(app: FastAPI):
             scorer.multimodal,
         )
     except Exception as exc:  # noqa: BLE001 - keep serving; retry on first request
-        logger.warning("Model preload failed (%s: %s); will load on first request.", type(exc).__name__, exc)
+        logger.warning(
+            "Model preload failed (%s: %s); will load on first request.",
+            type(exc).__name__,
+            exc,
+        )
     yield
 
 

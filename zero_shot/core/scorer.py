@@ -398,7 +398,9 @@ class Scorer:
                 if count == 0:
                     logprob_values = [prefix_logprobs[self.eos_token_id].item()]
                 else:
-                    attention_mask = torch.ones((1, prefix_len + count), device=device, dtype=torch.long)
+                    attention_mask = torch.ones(
+                        (1, prefix_len + count), device=device, dtype=torch.long
+                    )
                     cache_position = torch.arange(prefix_len, prefix_len + count, device=device)
                     out = self.language_model(
                         torch.tensor([cont_ids], device=device),
@@ -603,10 +605,10 @@ class Scorer:
         if len(cached) != len(exact):
             return float("inf")
         worst = 0.0
-        for c, e in zip(cached, exact):
+        for c, e in zip(cached, exact, strict=True):
             if [t.token_id for t in c.tokens] != [t.token_id for t in e.tokens]:
                 return float("inf")
-            for ct, et in zip(c.tokens, e.tokens):
+            for ct, et in zip(c.tokens, e.tokens, strict=True):
                 worst = max(worst, abs(ct.logprob - et.logprob))
             worst = max(worst, abs(c.eos_logprob - e.eos_logprob))
         return worst
