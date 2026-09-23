@@ -7,6 +7,7 @@ initTheme();
 
 const questionEditor = createJsonEditor(document.getElementById("question"));
 const stateEditor = createJsonEditor(document.getElementById("state"));
+const exampleSelect = document.getElementById("type");
 
 function loadTemplate(name) {
   const t = templates[name] || templates.choice;
@@ -15,7 +16,7 @@ function loadTemplate(name) {
   setMode(t.mode === "image" ? "image" : "text");
 }
 
-document.getElementById("type").addEventListener("change", (e) => loadTemplate(e.target.value));
+exampleSelect.addEventListener("change", (e) => loadTemplate(e.target.value));
 
 const dot = document.getElementById("dot");
 const statusText = document.getElementById("statusText");
@@ -34,11 +35,28 @@ let mode = "text";
 let imageFile = null;
 
 function setMode(next) {
+  if (next === "image" && modeToggle.disabled) return;
   mode = next;
   modeToggle.checked = next === "image";
   modeToggleLabel.dataset.mode = next;
   imagePanel.hidden = next !== "image";
   statePanel.hidden = next === "image";
+}
+
+function setVisionAvailable(available) {
+  const disabled = available === false;
+  modeToggle.disabled = disabled;
+  modeToggleLabel.classList.toggle("disabled", disabled);
+  modeToggleLabel.title = disabled
+    ? "The configured model is text-only. Serve a vision model (e.g. config.vlm.toml) for image input."
+    : "";
+  const imageOption = exampleSelect.querySelector('option[value="image"]');
+  if (imageOption) imageOption.disabled = disabled;
+  if (disabled && mode === "image") setMode("text");
+  if (disabled && exampleSelect.value === "image") {
+    exampleSelect.value = "choice";
+    loadTemplate("choice");
+  }
 }
 
 modeToggle.addEventListener("change", () => {
@@ -80,6 +98,7 @@ async function checkHealth() {
       dot.className = "dot ok";
       const dev = data.device + (data.device !== "cpu" ? " / " + data.gpu : "");
       statusText.textContent = (data.model_loaded ? "model loaded" : "loading on first run") + " · " + dev;
+      setVisionAvailable(data.multimodal);
     } else {
       dot.className = "dot err";
       statusText.textContent = "unavailable";

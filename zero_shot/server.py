@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from .classifier import classify
 from .config import load_config
-from .scorer import get_scorer, is_loaded
+from .scorer import get_scorer, is_loaded, loaded_scorer
 
 STATIC_DIR = Path(__file__).parent / "static"
 CONFIG = load_config()
@@ -73,6 +73,7 @@ def index() -> FileResponse:
 
 @app.get("/api/health")
 def health() -> dict[str, Any]:
+    scorer = loaded_scorer(CONFIG.model)
     return {
         "ok": True,
         "model_id": CONFIG.model,
@@ -82,7 +83,9 @@ def health() -> dict[str, Any]:
         "kv_cache": CONFIG.kv_cache,
         "temperature": CONFIG.temperature,
         "calibrate": CONFIG.calibrate,
-        "model_loaded": is_loaded(CONFIG.model),
+        "model_loaded": scorer is not None,
+        # None until the model is loaded, so the UI can hide/disable image mode.
+        "multimodal": scorer.multimodal if scorer is not None else None,
     }
 
 

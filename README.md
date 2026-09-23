@@ -155,7 +155,9 @@ Returns `{"model": ..., "answers": { "<id>": <answer> }, "results": [ ... ], "us
 
 `model` is optional and defaults to `config.toml`; if a different model is given it
 is loaded from (or downloaded into) a sibling directory under `models/`.
-`GET /api/health` reports the configured model and device.
+`GET /api/health` reports the configured model, device, and `multimodal`
+(`true`/`false` once the model is loaded, `null` before) so clients know whether
+image input is available.
 
 ### Image classification
 

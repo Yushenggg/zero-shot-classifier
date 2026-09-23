@@ -726,3 +726,13 @@ def is_loaded(model_id: str | None = None) -> bool:
     if model_id is None:
         return bool(_SCORERS)
     return any(key[0] == model_id for key in _SCORERS)
+
+
+def loaded_scorer(model_id: str | None = None) -> Scorer | None:
+    """Return the cached scorer for `model_id` (any if None), or None if not loaded.
+
+    Lets callers read model capabilities (e.g. `multimodal`) without loading it.
+    """
+    if model_id is None:
+        return next(iter(_SCORERS.values()), None)
+    return next((s for key, s in _SCORERS.items() if key[0] == model_id), None)

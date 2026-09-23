@@ -1,6 +1,13 @@
 from .classifier import SUPPORTED_TYPES, Classification, OptionScore, classify, classify_one
 from .config import Config, load_config
-from .scorer import Scorer, SequenceScore, TokenScore, get_scorer, is_loaded
+from .scorer import (
+    Scorer,
+    SequenceScore,
+    TokenScore,
+    get_scorer,
+    is_loaded,
+    loaded_scorer,
+)
 
 __all__ = [
     "SUPPORTED_TYPES",
@@ -15,4 +22,5 @@ __all__ = [
     "TokenScore",
     "get_scorer",
     "is_loaded",
+    "loaded_scorer",
 ]
