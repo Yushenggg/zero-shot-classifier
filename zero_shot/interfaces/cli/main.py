@@ -6,8 +6,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .classifier import Classification, classify
-from .config import load_config
+from ...core.classifier import Classification, classify
+from ...core.config import load_config
 
 
 def _load_json(path: str, label: str) -> Any:
@@ -16,9 +16,9 @@ def _load_json(path: str, label: str) -> Any:
     try:
         return json.loads(Path(path).read_text())
     except FileNotFoundError:
-        raise SystemExit(f"{label} file not found: {path}")
+        raise SystemExit(f"{label} file not found: {path}") from None
     except json.JSONDecodeError as exc:
-        raise SystemExit(f"{label} is not valid JSON: {exc}")
+        raise SystemExit(f"{label} is not valid JSON: {exc}") from None
 
 
 def _load_image(path: str) -> bytes:
@@ -81,8 +81,12 @@ def main(argv: list[str] | None = None) -> int:
             "optionally grounded in an image (--image)."
         ),
     )
-    parser.add_argument("--question", "-q", required=True, help="Question JSON file, or - for stdin.")
-    parser.add_argument("--state", "-s", default="-", help="State JSON file, or - for stdin (default).")
+    parser.add_argument(
+        "--question", "-q", required=True, help="Question JSON file, or - for stdin."
+    )
+    parser.add_argument(
+        "--state", "-s", default="-", help="State JSON file, or - for stdin (default)."
+    )
     parser.add_argument(
         "--image",
         "-i",
@@ -160,8 +164,12 @@ def main(argv: list[str] | None = None) -> int:
         action="store_false",
         help="Disable KV-cache reuse and use the exact full-sequence path.",
     )
-    parser.add_argument("--show-prompt", action="store_true", help="Print the prompt sent to the model.")
-    parser.add_argument("--json", action="store_true", help="Emit structured JSON instead of a table.")
+    parser.add_argument(
+        "--show-prompt", action="store_true", help="Print the prompt sent to the model."
+    )
+    parser.add_argument(
+        "--json", action="store_true", help="Emit structured JSON instead of a table."
+    )
     args = parser.parse_args(argv)
 
     stdin_sources = sum(
@@ -170,24 +178,26 @@ def main(argv: list[str] | None = None) -> int:
     if stdin_sources > 1:
         raise SystemExit("Only one of --question/--state/--image can read from stdin.")
 
-    config = load_config(args.config)
-    model_id = args.model_id or config.model
-    save_to = config.resolve_save_to(args.save_to)
-    device = args.device or config.device
-    gpu = args.gpu or config.gpu
-    quantize = args.quantize or config.quantize
-    use_kv_cache = config.kv_cache if args.kv_cache is None else args.kv_cache
-    temperature = args.temperature if args.temperature is not None else config.temperature
-    calibrate = config.calibrate if args.calibrate is None else args.calibrate
-    calibration_context = (
-        args.calibration_context if args.calibration_context is not None else config.calibration_context
-    )
-
-    question = _load_json(args.question, "Question")
-    state = _load_json(args.state, "State")
-    image = _load_image(args.image) if args.image else None
-
     try:
+        config = load_config(args.config)
+        model_id = args.model_id or config.model
+        save_to = config.resolve_save_to(args.save_to)
+        device = args.device or config.device
+        gpu = args.gpu or config.gpu
+        quantize = args.quantize or config.quantize
+        use_kv_cache = config.kv_cache if args.kv_cache is None else args.kv_cache
+        temperature = args.temperature if args.temperature is not None else config.temperature
+        calibrate = config.calibrate if args.calibrate is None else args.calibrate
+        calibration_context = (
+            args.calibration_context
+            if args.calibration_context is not None
+            else config.calibration_context
+        )
+
+        question = _load_json(args.question, "Question")
+        state = _load_json(args.state, "State")
+        image = _load_image(args.image) if args.image else None
+
         results = classify(
             question,
             state,

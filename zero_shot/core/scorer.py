@@ -3,11 +3,11 @@ from __future__ import annotations
 import logging
 import os
 import threading
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from .config import DEFAULT_MODEL_ID, SUPPORTED_GPUS
+from .models import SequenceScore, TokenScore
 
 logger = logging.getLogger(__name__)
 
@@ -108,36 +108,6 @@ def resolve_device(device: str = "cpu", gpu: str | None = None) -> str:
                 f"config gpu = {gpu!r} expects {info['name']!r} but found {actual!r}."
             )
     return "cuda"
-
-
-@dataclass
-class TokenScore:
-    token: str
-    token_id: int
-    logprob: float
-
-    def to_dict(self) -> dict:
-        return {"token": self.token, "token_id": self.token_id, "logprob": self.logprob}
-
-
-@dataclass
-class SequenceScore:
-    option: str
-    continuation: str
-    tokens: list[TokenScore] = field(default_factory=list)
-    eos_token: str = ""
-    eos_logprob: float = 0.0
-    total_logprob: float = 0.0
-
-    def to_dict(self) -> dict:
-        return {
-            "option": self.option,
-            "continuation": self.continuation,
-            "tokens": [t.to_dict() for t in self.tokens],
-            "eos_token": self.eos_token,
-            "eos_logprob": self.eos_logprob,
-            "total_logprob": self.total_logprob,
-        }
 
 
 def resolve_model_dir(model_id: str, save_to: str | None) -> tuple[str, bool]:
@@ -428,7 +398,9 @@ class Scorer:
                 if count == 0:
                     logprob_values = [prefix_logprobs[self.eos_token_id].item()]
                 else:
-                    attention_mask = torch.ones((1, prefix_len + count), device=device, dtype=torch.long)
+                    attention_mask = torch.ones(
+                        (1, prefix_len + count), device=device, dtype=torch.long
+                    )
                     cache_position = torch.arange(prefix_len, prefix_len + count, device=device)
                     out = self.language_model(
                         torch.tensor([cont_ids], device=device),
@@ -633,10 +605,10 @@ class Scorer:
         if len(cached) != len(exact):
             return float("inf")
         worst = 0.0
-        for c, e in zip(cached, exact):
+        for c, e in zip(cached, exact, strict=True):
             if [t.token_id for t in c.tokens] != [t.token_id for t in e.tokens]:
                 return float("inf")
-            for ct, et in zip(c.tokens, e.tokens):
+            for ct, et in zip(c.tokens, e.tokens, strict=True):
                 worst = max(worst, abs(ct.logprob - et.logprob))
             worst = max(worst, abs(c.eos_logprob - e.eos_logprob))
         return worst

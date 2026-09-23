@@ -162,14 +162,14 @@ If switching the **default** (changes to `config.toml`), also update:
 - `README.md` — Configuration table + bias-table placeholder
 - `Dockerfile` / `docker-compose.yml` — only if the default's CPU image changes
 - `docs/index.html` — "Choosing a model" / "Trying it on a vision model" sections
-- `zero_shot/config.py` — `DEFAULT_MODEL_ID` / `DEFAULT_SAVE_TO`
+- `zero_shot/core/config.py` — `DEFAULT_MODEL_ID` / `DEFAULT_SAVE_TO`
 
 ## 8. Smoke test
 
 Confirm the new config actually loads. Start the server and poll `/api/health`:
 
 ```bash
-.venv/bin/python -m uvicorn zero_shot.server:app \
+.venv/bin/python -m uvicorn zero_shot.interfaces.server.app:app \
     --host 127.0.0.1 --port 8766 --log-level info \
     > /tmp/opencode/smoke.log 2>&1 &
 SERVER_PID=$!

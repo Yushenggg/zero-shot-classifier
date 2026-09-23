@@ -9,5 +9,8 @@ wheels/
 # Virtual environments
 .venv
 
+# Tooling caches
+.ruff_cache/
+
 # Downloaded model weights
 models/
