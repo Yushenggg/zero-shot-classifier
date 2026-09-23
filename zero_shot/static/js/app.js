@@ -30,6 +30,7 @@ const imageInput = document.getElementById("imageInput");
 const imagePreview = document.getElementById("imagePreview");
 const imageNote = document.getElementById("imageNote");
 const imageClear = document.getElementById("imageClear");
+const imageState = document.getElementById("imageState");
 
 let mode = "text";
 let imageFile = null;
@@ -130,6 +131,16 @@ runBtn.addEventListener("click", async () => {
       const form = new FormData();
       form.append("file", imageFile);
       form.append("questions", JSON.stringify(question));
+      const context = imageState.value.trim();
+      if (context) {
+        let parsed;
+        try {
+          parsed = JSON.parse(context);
+        } catch (e) {
+          throw new Error("Context is not valid JSON: " + e.message);
+        }
+        form.append("state", JSON.stringify(parsed));
+      }
       res = await fetch("/v1/classify/image", { method: "POST", body: form });
     } else {
       const state = parseEditor(stateEditor, "State");

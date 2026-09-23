@@ -17,12 +17,18 @@ from pydantic import BaseModel
 
 from .classifier import classify
 from .config import load_config
-from .scorer import get_scorer, is_loaded, loaded_scorer
+from .scorer import get_scorer, loaded_scorer
 
 STATIC_DIR = Path(__file__).parent / "static"
 CONFIG = load_config()
 logger = logging.getLogger("uvicorn.error")
 _RESOLVED_DEVICE: str | None = None
+
+# Upload ceiling for image requests. The model processor downscales to whatever
+# resolution it wants anyway, so this only guards the decode step against absurd
+# uploads (a decompression bomb / multi-hundred-MB file). Override with
+# ZERO_SHOT_MAX_IMAGE_MB.
+MAX_IMAGE_BYTES = int(float(os.environ.get("ZERO_SHOT_MAX_IMAGE_MB", "16")) * 1024 * 1024)
 
 
 @asynccontextmanager
@@ -45,7 +51,12 @@ async def lifespan(app: FastAPI):
             quantize=CONFIG.quantize,
         )
         _RESOLVED_DEVICE = scorer.device
-        logger.info("Model ready: %s on %s", type(scorer._model).__name__, scorer.device)
+        logger.info(
+            "Model ready: %s on %s (multimodal=%s)",
+            type(scorer._model).__name__,
+            scorer.device,
+            scorer.multimodal,
+        )
     except Exception as exc:  # noqa: BLE001 - keep serving; retry on first request
         logger.warning("Model preload failed (%s: %s); will load on first request.", type(exc).__name__, exc)
     yield
@@ -165,6 +176,7 @@ def systemone_endpoint(request: ClassifyRequest) -> JSONResponse:
 
 
 @app.post("/v1/classify/image")
+@app.post("/v1/systemone/image")
 async def classify_image_endpoint(
     file: UploadFile = File(...),
     questions: str = Form(...),
@@ -175,7 +187,11 @@ async def classify_image_endpoint(
     calibrate: bool | None = Form(None),
     calibration_context: str | None = Form(None),
 ) -> JSONResponse:
-    """Image classification: multipart `file` stream plus JSON `questions`/`state`."""
+    """Image classification: multipart `file` stream plus JSON `questions`/`state`.
+
+    Mounted at `/v1/classify/image` and the TypeSafe-compatible
+    `/v1/systemone/image`.
+    """
     try:
         questions_payload = json.loads(questions)
     except json.JSONDecodeError as exc:
@@ -191,9 +207,22 @@ async def classify_image_endpoint(
                 status_code=422, content={"error": f"`state` is not valid JSON: {exc}"}
             )
 
+    if file.size is not None and file.size > MAX_IMAGE_BYTES:
+        return JSONResponse(
+            status_code=413,
+            content={
+                "error": f"`file` exceeds the {MAX_IMAGE_BYTES // (1024 * 1024)} MB limit "
+                "(set ZERO_SHOT_MAX_IMAGE_MB to raise it)"
+            },
+        )
     image = await file.read()
     if not image:
         return JSONResponse(status_code=422, content={"error": "`file` is empty"})
+    if len(image) > MAX_IMAGE_BYTES:
+        return JSONResponse(
+            status_code=413,
+            content={"error": f"`file` exceeds the {MAX_IMAGE_BYTES // (1024 * 1024)} MB limit"},
+        )
 
     return _run_classify(
         questions_payload,

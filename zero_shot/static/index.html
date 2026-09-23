@@ -36,6 +36,10 @@
         <button id="imageClear" class="ghost" type="button">Clear</button>
       </div>
       <div class="image-note" id="imageNote">Attach an image to classify it with a vision-language model.</div>
+      <details class="image-state" id="imageStateDetails">
+        <summary>Add text context (optional)</summary>
+        <textarea id="imageState" class="image-state-input" placeholder='{ "input": "extra context the image alone does not carry" }' spellcheck="false"></textarea>
+      </details>
       <img id="imagePreview" class="image-preview" alt="" hidden />
     </section>
 

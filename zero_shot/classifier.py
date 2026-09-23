@@ -212,7 +212,7 @@ def classify_one(
             )
     _softmax(scores, temperature)
 
-    input_tokens = len(scorer.tokenizer(prompt)["input_ids"])
+    input_tokens = scorer.count_input_tokens(prompt, image)
     ranked = [s for s in scores if s.logprob is not None]
     winner = max(ranked, key=lambda s: s.probability) if ranked else None
     output_tokens = (len(winner.tokens) + 1) if winner else 0

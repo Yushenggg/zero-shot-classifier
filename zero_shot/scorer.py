@@ -526,6 +526,17 @@ class Scorer:
         inputs = self._vision_batch(wrapped, image)
         return wrapped, int(inputs["input_ids"].shape[1]), inputs
 
+    def count_input_tokens(self, prefix_text: str, image: Any = None) -> int:
+        """Number of input tokens the model sees for `prefix_text`.
+
+        With an image this includes the expanded image placeholder tokens, so the
+        reported usage matches what the vision model actually consumes.
+        """
+        if image is None or self.processor is None or not self.multimodal:
+            return len(self.tokenizer(prefix_text)["input_ids"])
+        _, prefix_len, _ = self._vision_prefix(prefix_text, self._as_image(image))
+        return prefix_len
+
     def _score_options_vision(
         self,
         prefix_text: str,
@@ -611,6 +622,12 @@ class Scorer:
         prefix_inputs = {
             k: (v.to(device) if hasattr(v, "to") else v) for k, v in prefix_inputs.items()
         }
+        # The option continuation lives entirely after the shared prompt, so the
+        # tokenizer alone yields the same ids as a full processor pass -- no need
+        # to re-decode/resize the image for every option (the model's cached
+        # forward doesn't need pixel_values again). The image placeholder expands
+        # to `prefix_len`, so the text prefix is sliced by its own length.
+        prefix_ids = self.tokenizer(wrapped)["input_ids"]
 
         with torch.inference_mode():
             prefill = model(**prefix_inputs, use_cache=True)
@@ -626,9 +643,16 @@ class Scorer:
         results: list[SequenceScore] = []
         for option in options:
             continuation = (" " if add_leading_space else "") + option
-            full_inputs = self._vision_batch(wrapped + continuation, image)
-            full_ids = full_inputs["input_ids"][0].tolist()
-            cont_ids = full_ids[prefix_len:]
+            full_ids = self.tokenizer(wrapped + continuation)["input_ids"]
+            if full_ids[: len(prefix_ids)] != prefix_ids:
+                # Unusual processor/tokenizer mismatch: re-encode with the image
+                # so the slice stays aligned with the expanded prefix.
+                full_ids = self._vision_batch(wrapped + continuation, image)[
+                    "input_ids"
+                ][0].tolist()
+                cont_ids = full_ids[prefix_len:]
+            else:
+                cont_ids = full_ids[len(prefix_ids):]
             count = len(cont_ids)
 
             with torch.inference_mode():

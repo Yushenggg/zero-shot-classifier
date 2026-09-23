@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # One Dockerfile, two builds:
-#   docker build -t zero-shot:cpu .                                     # CPU + SmolLM (default)
+#   docker build -t zero-shot:cpu .                                     # CPU + SmolVLM (default)
 #   docker build --build-arg TORCH_BACKEND=cu130 -t zero-shot:gpu .     # CUDA + Qwen
 #
 # TORCH_BACKEND is passed straight to `uv pip install --torch-backend`, so the

@@ -138,7 +138,7 @@ between criteria orderings); prefer `config.toml` whenever a GPU is available.
 CPU advertising `AVX512_BF16`/`AMX_BF16` (e.g. AMD Zen 4/5) — and **fp32**
 otherwise. This matters on Intel consumer CPUs since 12th gen (Alder Lake on),
 where AVX-512 is fused off: PyTorch then *emulates* bf16, which is several times
-slower than fp32 (the SmolLM2 CPU image can take seconds per request there).
+slower than fp32 (the SmolVLM CPU image can take seconds per request there).
 `quantize = "fp32"` or `"bf16"` forces a dtype, and `"int8"` applies dynamic
 quantization on CPU — faster on AVX2+VNNI and ~4x less RAM, but it perturbs
 logprobs, so near-tie predictions can shift. CUDA is never quantized. Overridable
@@ -211,8 +211,9 @@ CLI (`--image`/`-i` takes a file, or `-` for raw bytes on stdin):
   -q examples/color_question.json -s examples/color_state.json -i photo.jpg
 ```
 
-HTTP API: `POST /v1/classify/image` accepts `multipart/form-data` with a `file`
-image stream and JSON `questions`/`state` strings. Text requests use
+HTTP API: `POST /v1/classify/image` (also at the TypeSafe-compatible
+`POST /v1/systemone/image`) accepts `multipart/form-data` with a `file` image
+stream and JSON `questions`/`state` strings. Text requests use
 `/v1/classify/text`; both go through the exact same scoring path:
 
 ```bash
@@ -221,12 +222,18 @@ curl -F file=@photo.jpg \
      http://127.0.0.1:8000/v1/classify/image
 ```
 
+Uploads are capped at 16 MB per file (set `ZERO_SHOT_MAX_IMAGE_MB` to change it);
+the model processor downscales to its own resolution, so the cap only guards the
+decode step against oversized files.
+
 In the web UI, switch the **Text / Image** toggle to Image, attach a file, and
-Classify — the UI posts to `/v1/classify/image` (the State editor is hidden,
-since the image is the context). The Text/Image toggle is automatically disabled
-when the loaded model is text-only. The image + prompt are prefilled once and
-the KV cache is reused across options, so the calibration pass shares the same
-image prefill. Passing `--image` to a text-only model fails with a clear error.
+Classify. The State editor is replaced by an optional **Add text context**
+field — attach a `state` JSON there only when the image alone is not enough
+(the API accepts `state` alongside the file either way). The Text/Image toggle is
+automatically disabled when the loaded model is text-only. The image + prompt are
+prefilled once and the KV cache is reused across options, so the calibration pass
+shares the same image prefill. Passing `--image` to a text-only model fails with
+a clear error.
 
 ### Web UI
 

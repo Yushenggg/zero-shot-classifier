@@ -79,6 +79,13 @@
   }
   button.ghost:hover { color: var(--accent); border-color: var(--accent); }
   .image-note { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  .image-state { margin-top: 8px; }
+  .image-state-input {
+    width: 100%; margin-top: 8px; min-height: 84px; resize: vertical;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; line-height: 1.5;
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px;
+  }
   #imagePanel { overflow: hidden; }
   .image-preview {
     margin-top: 10px; width: 100%; flex: 1 1 auto; min-height: 0; max-height: none;
