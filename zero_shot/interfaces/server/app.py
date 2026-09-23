@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 import json
 import logging
 import os
@@ -9,17 +8,16 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-import uvicorn
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from .classifier import classify
-from .config import load_config
-from .image_utils import decode_image, downscale_to_byte_limit
-from .scorer import get_scorer, loaded_scorer
+from ...core.classifier import classify
+from ...core.config import Config, load_config
+from ...core.image_utils import decode_image, downscale_to_byte_limit
+from ...core.scorer import get_scorer, loaded_scorer
 
 STATIC_DIR = Path(__file__).parent / "static"
 CONFIG = load_config()
@@ -279,45 +277,13 @@ async def classify_image_endpoint(
     )
 
 
-def _cpu_low_config_path() -> Path:
-    """Locate the bundled config.cpu.toml (project root or cwd)."""
-    candidate = Path(__file__).resolve().parent.parent / "config.cpu.toml"
-    return candidate if candidate.exists() else Path.cwd() / "config.cpu.toml"
+def configure(config: Config) -> Config:
+    """Swap the active config at runtime (used by ``zero-shot-serve --config``).
 
-
-def main(argv: list[str] | None = None) -> None:
-    parser = argparse.ArgumentParser(
-        prog="zero-shot-serve",
-        description="Serve the zero-shot classifier web UI and HTTP API.",
-    )
-    parser.add_argument(
-        "--config",
-        default=None,
-        help="Config file to serve, e.g. config.cpu.toml for the SmolVLM-500M CPU path.",
-    )
-    parser.add_argument(
-        "--cpu-low",
-        action="store_true",
-        help="Serve the CPU model (config.cpu.toml, SmolVLM-500M) instead of the configured one.",
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=None,
-        help="Bind port (default: $ZERO_SHOT_PORT or 8000).",
-    )
-    args = parser.parse_args(argv)
-
+    Endpoints read the module-level :data:`CONFIG` on each request, so the new
+    config takes effect without rebuilding the app. The model is loaded lazily on
+    the first request (or by the lifespan hook on the next start).
+    """
     global CONFIG
-    if args.config:
-        CONFIG = load_config(args.config)
-    elif args.cpu_low:
-        CONFIG = load_config(_cpu_low_config_path())
-
-    host = os.environ.get("ZERO_SHOT_HOST", "127.0.0.1")
-    port = args.port if args.port is not None else int(os.environ.get("ZERO_SHOT_PORT", "8000"))
-    uvicorn.run(app, host=host, port=port, reload=False)
-
-
-if __name__ == "__main__":
-    main()
+    CONFIG = config
+    return CONFIG

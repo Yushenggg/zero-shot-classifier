@@ -6,8 +6,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .classifier import Classification, classify
-from .config import load_config
+from ...core.classifier import Classification, classify
+from ...core.config import load_config
 
 
 def _load_json(path: str, label: str) -> Any:

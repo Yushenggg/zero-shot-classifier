@@ -39,7 +39,7 @@ def _default_config_path() -> Path:
     env = os.environ.get("ZERO_SHOT_CONFIG")
     if env:
         return Path(env)
-    project_root = Path(__file__).resolve().parent.parent
+    project_root = Path(__file__).resolve().parent.parent.parent
     candidate = project_root / "config.toml"
     if candidate.exists():
         return candidate

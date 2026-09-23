@@ -20,8 +20,8 @@ dependencies = [
 ]
 
 [project.scripts]
-zero-shot = "zero_shot.cli:main"
-zero-shot-serve = "zero_shot.server:main"
+zero-shot = "zero_shot.interfaces.cli.main:main"
+zero-shot-serve = "zero_shot.interfaces.server.main:main"
 
 [build-system]
 requires = ["hatchling"]
