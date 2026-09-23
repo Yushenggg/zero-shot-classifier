@@ -170,24 +170,26 @@ def main(argv: list[str] | None = None) -> int:
     if stdin_sources > 1:
         raise SystemExit("Only one of --question/--state/--image can read from stdin.")
 
-    config = load_config(args.config)
-    model_id = args.model_id or config.model
-    save_to = config.resolve_save_to(args.save_to)
-    device = args.device or config.device
-    gpu = args.gpu or config.gpu
-    quantize = args.quantize or config.quantize
-    use_kv_cache = config.kv_cache if args.kv_cache is None else args.kv_cache
-    temperature = args.temperature if args.temperature is not None else config.temperature
-    calibrate = config.calibrate if args.calibrate is None else args.calibrate
-    calibration_context = (
-        args.calibration_context if args.calibration_context is not None else config.calibration_context
-    )
-
-    question = _load_json(args.question, "Question")
-    state = _load_json(args.state, "State")
-    image = _load_image(args.image) if args.image else None
-
     try:
+        config = load_config(args.config)
+        model_id = args.model_id or config.model
+        save_to = config.resolve_save_to(args.save_to)
+        device = args.device or config.device
+        gpu = args.gpu or config.gpu
+        quantize = args.quantize or config.quantize
+        use_kv_cache = config.kv_cache if args.kv_cache is None else args.kv_cache
+        temperature = args.temperature if args.temperature is not None else config.temperature
+        calibrate = config.calibrate if args.calibrate is None else args.calibrate
+        calibration_context = (
+            args.calibration_context
+            if args.calibration_context is not None
+            else config.calibration_context
+        )
+
+        question = _load_json(args.question, "Question")
+        state = _load_json(args.state, "State")
+        image = _load_image(args.image) if args.image else None
+
         results = classify(
             question,
             state,

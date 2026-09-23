@@ -11,13 +11,19 @@ from typing import Any
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from ...core.classifier import classify
 from ...core.config import Config, load_config
 from ...core.image_utils import decode_image, downscale_to_byte_limit
 from ...core.scorer import get_scorer, loaded_scorer
+from .schemas import (
+    ClassifyRequest,
+    ClassifyResponse,
+    ErrorResponse,
+    HealthResponse,
+    Usage,
+)
 
 STATIC_DIR = Path(__file__).parent / "static"
 CONFIG = load_config()
@@ -35,14 +41,25 @@ MAX_UPLOAD_BYTES = int(float(os.environ.get("ZERO_SHOT_MAX_UPLOAD_MB", "64")) * 
 # multipart overhead. Rejected before the body is read.
 MAX_REQUEST_BYTES = MAX_UPLOAD_BYTES + 1024 * 1024
 
+# Error shapes documented in OpenAPI (the endpoints return them as JSONResponse).
+ERROR_RESPONSES: dict[int, dict[str, Any]] = {
+    400: {"model": ErrorResponse, "description": "Invalid request or classification error"},
+    413: {"model": ErrorResponse, "description": "Upload or request body too large"},
+    422: {"model": ErrorResponse, "description": "Malformed request body"},
+}
+
+
+def _error(status_code: int, message: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=status_code, content=ErrorResponse(error=message).model_dump()
+    )
+
 
 def _too_large_response() -> JSONResponse:
-    return JSONResponse(
-        status_code=413,
-        content={
-            "error": f"`file` exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB upload limit "
-            "(set ZERO_SHOT_MAX_UPLOAD_MB to raise it)"
-        },
+    return _error(
+        413,
+        f"`file` exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB upload limit "
+        "(set ZERO_SHOT_MAX_UPLOAD_MB to raise it)",
     )
 
 
@@ -91,26 +108,12 @@ async def limit_request_body(request, call_next):
         except ValueError:
             too_large = False
         if too_large:
-            return JSONResponse(
-                status_code=413,
-                content={
-                    "error": f"Request body exceeds the "
-                    f"{MAX_REQUEST_BYTES // (1024 * 1024)} MB limit "
-                    "(set ZERO_SHOT_MAX_UPLOAD_MB to raise it)"
-                },
+            return _error(
+                413,
+                f"Request body exceeds the {MAX_REQUEST_BYTES // (1024 * 1024)} MB limit "
+                "(set ZERO_SHOT_MAX_UPLOAD_MB to raise it)",
             )
     return await call_next(request)
-
-
-class ClassifyRequest(BaseModel):
-    state: Any = None
-    questions: dict[str, Any] | None = None
-    question: dict[str, Any] | None = None  # legacy alias for `questions`
-    model: str | None = None
-    temperature: float | None = None
-    kv_cache: bool | None = None
-    calibrate: bool | None = None
-    calibration_context: str | None = None
 
 
 @app.get("/")
@@ -119,21 +122,20 @@ def index() -> FileResponse:
 
 
 @app.get("/api/health")
-def health() -> dict[str, Any]:
+def health() -> HealthResponse:
     scorer = loaded_scorer(CONFIG.model)
-    return {
-        "ok": True,
-        "model_id": CONFIG.model,
-        "device": _RESOLVED_DEVICE or CONFIG.device,
-        "gpu": CONFIG.gpu,
-        "quantize": CONFIG.quantize,
-        "kv_cache": CONFIG.kv_cache,
-        "temperature": CONFIG.temperature,
-        "calibrate": CONFIG.calibrate,
-        "model_loaded": scorer is not None,
-        # None until the model is loaded, so the UI can hide/disable image mode.
-        "multimodal": scorer.multimodal if scorer is not None else None,
-    }
+    return HealthResponse(
+        ok=True,
+        model_id=CONFIG.model,
+        device=_RESOLVED_DEVICE or CONFIG.device,
+        gpu=CONFIG.gpu,
+        quantize=CONFIG.quantize,
+        kv_cache=CONFIG.kv_cache,
+        temperature=CONFIG.temperature,
+        calibrate=CONFIG.calibrate,
+        model_loaded=scorer is not None,
+        multimodal=scorer.multimodal if scorer is not None else None,
+    )
 
 
 def _run_classify(
@@ -165,29 +167,27 @@ def _run_classify(
             image=image,
         )
     except (ValueError, RuntimeError) as exc:
-        return JSONResponse(status_code=400, content={"error": str(exc)})
+        return _error(400, str(exc))
     elapsed_ms = (time.perf_counter() - started) * 1000
 
     answers = {r.name: r.to_dict() for r in results}
-    usage = {
-        "input_tokens": sum(r.input_tokens for r in results),
-        "output_tokens": sum(r.output_tokens for r in results),
-        "timing_ms": elapsed_ms,
-    }
-    return JSONResponse(
-        content={
-            "model": model_id,
-            "answers": answers,
-            "results": list(answers.values()),
-            "usage": usage,
-        }
+    payload = ClassifyResponse(
+        model=model_id,
+        answers=answers,
+        results=list(answers.values()),
+        usage=Usage(
+            input_tokens=sum(r.input_tokens for r in results),
+            output_tokens=sum(r.output_tokens for r in results),
+            timing_ms=elapsed_ms,
+        ),
     )
+    return JSONResponse(content=payload.model_dump())
 
 
 def _text_response(request: ClassifyRequest) -> JSONResponse:
     questions = request.questions if request.questions is not None else request.question
     if not questions:
-        return JSONResponse(status_code=422, content={"error": "`questions` is required"})
+        return _error(422, "`questions` is required")
     return _run_classify(
         questions,
         request.state,
@@ -199,20 +199,20 @@ def _text_response(request: ClassifyRequest) -> JSONResponse:
     )
 
 
-@app.post("/v1/classify/text")
+@app.post("/v1/classify/text", response_model=ClassifyResponse, responses=ERROR_RESPONSES)
 def classify_text_endpoint(request: ClassifyRequest) -> JSONResponse:
     """Text classification from a JSON body."""
     return _text_response(request)
 
 
-@app.post("/v1/systemone")
+@app.post("/v1/systemone", response_model=ClassifyResponse, responses=ERROR_RESPONSES)
 def systemone_endpoint(request: ClassifyRequest) -> JSONResponse:
     """TypeSafe-compatible JSON endpoint (text-only)."""
     return _text_response(request)
 
 
-@app.post("/v1/classify/image")
-@app.post("/v1/systemone/image")
+@app.post("/v1/classify/image", response_model=ClassifyResponse, responses=ERROR_RESPONSES)
+@app.post("/v1/systemone/image", response_model=ClassifyResponse, responses=ERROR_RESPONSES)
 async def classify_image_endpoint(
     file: UploadFile = File(...),
     questions: str = Form(...),
@@ -231,23 +231,19 @@ async def classify_image_endpoint(
     try:
         questions_payload = json.loads(questions)
     except json.JSONDecodeError as exc:
-        return JSONResponse(
-            status_code=422, content={"error": f"`questions` is not valid JSON: {exc}"}
-        )
+        return _error(422, f"`questions` is not valid JSON: {exc}")
     state_payload: Any = None
     if state:
         try:
             state_payload = json.loads(state)
         except json.JSONDecodeError as exc:
-            return JSONResponse(
-                status_code=422, content={"error": f"`state` is not valid JSON: {exc}"}
-            )
+            return _error(422, f"`state` is not valid JSON: {exc}")
 
     if file.size is not None and file.size > MAX_UPLOAD_BYTES:
         return _too_large_response()
     image = await file.read()
     if not image:
-        return JSONResponse(status_code=422, content={"error": "`file` is empty"})
+        return _error(422, "`file` is empty")
     if len(image) > MAX_UPLOAD_BYTES:
         return _too_large_response()
     if len(image) > MAX_IMAGE_BYTES:
@@ -256,13 +252,13 @@ async def classify_image_endpoint(
                 downscale_to_byte_limit, image, MAX_IMAGE_BYTES
             )
         except ValueError as exc:
-            return JSONResponse(status_code=400, content={"error": str(exc)})
+            return _error(400, str(exc))
     # Decode at the edge so corrupt uploads fail as 400 here, not 500 deeper in
     # the scorer. The decoded image is passed straight through.
     try:
         image = await run_in_threadpool(decode_image, image)
     except ValueError as exc:
-        return JSONResponse(status_code=400, content={"error": str(exc)})
+        return _error(400, str(exc))
 
     return await run_in_threadpool(
         _run_classify,
@@ -284,6 +280,7 @@ def configure(config: Config) -> Config:
     config takes effect without rebuilding the app. The model is loaded lazily on
     the first request (or by the lifespan hook on the next start).
     """
-    global CONFIG
+    global CONFIG, _RESOLVED_DEVICE
     CONFIG = config
+    _RESOLVED_DEVICE = None
     return CONFIG

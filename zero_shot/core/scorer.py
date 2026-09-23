@@ -3,11 +3,11 @@ from __future__ import annotations
 import logging
 import os
 import threading
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from .config import DEFAULT_MODEL_ID, SUPPORTED_GPUS
+from .models import SequenceScore, TokenScore
 
 logger = logging.getLogger(__name__)
 
@@ -108,36 +108,6 @@ def resolve_device(device: str = "cpu", gpu: str | None = None) -> str:
                 f"config gpu = {gpu!r} expects {info['name']!r} but found {actual!r}."
             )
     return "cuda"
-
-
-@dataclass
-class TokenScore:
-    token: str
-    token_id: int
-    logprob: float
-
-    def to_dict(self) -> dict:
-        return {"token": self.token, "token_id": self.token_id, "logprob": self.logprob}
-
-
-@dataclass
-class SequenceScore:
-    option: str
-    continuation: str
-    tokens: list[TokenScore] = field(default_factory=list)
-    eos_token: str = ""
-    eos_logprob: float = 0.0
-    total_logprob: float = 0.0
-
-    def to_dict(self) -> dict:
-        return {
-            "option": self.option,
-            "continuation": self.continuation,
-            "tokens": [t.to_dict() for t in self.tokens],
-            "eos_token": self.eos_token,
-            "eos_logprob": self.eos_logprob,
-            "total_logprob": self.total_logprob,
-        }
 
 
 def resolve_model_dir(model_id: str, save_to: str | None) -> tuple[str, bool]:

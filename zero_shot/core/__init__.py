@@ -5,29 +5,41 @@ here imports an interface (CLI, server); interfaces depend on core, never the
 other way around.
 """
 
-from .classifier import SUPPORTED_TYPES, Classification, OptionScore, classify, classify_one
+from .classifier import classify, classify_one
 from .config import Config, load_config
-from .scorer import (
-    Scorer,
+from .models import (
+    SUPPORTED_TYPES,
+    ChoiceQuestion,
+    Classification,
+    NoulQuestion,
+    OptionScore,
+    QuestionSpec,
+    ScoreQuestion,
     SequenceScore,
     TokenScore,
-    get_scorer,
-    is_loaded,
-    loaded_scorer,
+    parse_question,
+    parse_questions,
 )
+from .scorer import Scorer, get_scorer, is_loaded, loaded_scorer
 
 __all__ = [
     "SUPPORTED_TYPES",
+    "ChoiceQuestion",
     "Classification",
-    "OptionScore",
-    "classify",
-    "classify_one",
     "Config",
-    "load_config",
+    "NoulQuestion",
+    "OptionScore",
+    "QuestionSpec",
+    "ScoreQuestion",
     "Scorer",
     "SequenceScore",
     "TokenScore",
+    "classify",
+    "classify_one",
     "get_scorer",
     "is_loaded",
+    "load_config",
     "loaded_scorer",
+    "parse_question",
+    "parse_questions",
 ]

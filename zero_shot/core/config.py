@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import os
 import tomllib
-from dataclasses import dataclass, field
 from pathlib import Path
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 DEFAULT_MODEL_ID = "Qwen/Qwen3-VL-4B-Instruct"
 DEFAULT_SAVE_TO: str | None = "models/qwen3-vl-4b-instruct"
@@ -11,6 +12,7 @@ DEFAULT_DEVICE = "auto"
 DEFAULT_GPU = "rtx_5060_ti"
 DEFAULT_QUANTIZE = "auto"
 QUANTIZE_MODES = ("auto", "bf16", "fp32", "int8")
+DEVICE_MODES = ("auto", "cpu", "gpu", "cuda")
 
 # Env vars override the config file (and the built-in defaults), matching the
 # README. Precedence: $ZERO_SHOT_* > config file > default.
@@ -58,14 +60,15 @@ def _env_override(key: str) -> str | None:
     return _clean(os.environ.get(_ENV_KEYS[key]))
 
 
-@dataclass
-class Config:
+class Config(BaseModel):
     """Model settings loaded from a TOML config file.
 
     Paths in `save_to` are resolved relative to `base_dir` (the directory that
     contains the config file), so the model always lands inside the project and
     never depends on the current working directory.
     """
+
+    model_config = ConfigDict(validate_assignment=False)
 
     model: str = DEFAULT_MODEL_ID
     save_to: str | None = DEFAULT_SAVE_TO
@@ -76,7 +79,34 @@ class Config:
     temperature: float = 1.0
     calibrate: bool = True
     calibration_context: str = "N/A"
-    base_dir: Path = field(default_factory=Path.cwd)
+    base_dir: Path = Field(default_factory=Path.cwd)
+
+    @field_validator("temperature")
+    @classmethod
+    def _temperature_positive(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError(f"config temperature must be > 0, got {value}")
+        return value
+
+    @field_validator("quantize")
+    @classmethod
+    def _quantize_known(cls, value: str) -> str:
+        mode = value.strip().lower()
+        if mode not in QUANTIZE_MODES:
+            raise ValueError(
+                f"config quantize must be one of {QUANTIZE_MODES}, got {mode!r}"
+            )
+        return mode
+
+    @field_validator("device")
+    @classmethod
+    def _device_known(cls, value: str) -> str:
+        device = value.strip().lower()
+        if device not in DEVICE_MODES:
+            raise ValueError(
+                f"config device must be one of {DEVICE_MODES}, got {device!r}"
+            )
+        return device
 
     @property
     def local_dir(self) -> Path | None:
@@ -126,22 +156,14 @@ def load_config(path: str | Path | None = None) -> Config:
             return data[key]
         return default
 
-    temperature = float(data.get("temperature", 1.0))
-    if temperature <= 0:
-        raise ValueError(f"config temperature must be > 0, got {temperature}")
-    quantize = str(pick("quantize", DEFAULT_QUANTIZE)).strip().lower()
-    if quantize not in QUANTIZE_MODES:
-        raise ValueError(
-            f"config quantize must be one of {QUANTIZE_MODES}, got {quantize!r}"
-        )
     return Config(
         model=str(pick("model", DEFAULT_MODEL_ID)),
         save_to=_clean(pick("save_to", DEFAULT_SAVE_TO)),
-        device=str(pick("device", DEFAULT_DEVICE)).strip().lower(),
+        device=str(pick("device", DEFAULT_DEVICE)),
         gpu=str(pick("gpu", DEFAULT_GPU)),
-        quantize=quantize,
+        quantize=str(pick("quantize", DEFAULT_QUANTIZE)),
         kv_cache=bool(data.get("kv_cache", True)),
-        temperature=temperature,
+        temperature=data.get("temperature", 1.0),
         calibrate=bool(data.get("calibrate", True)),
         calibration_context=str(data.get("calibration_context", "N/A")),
         base_dir=base_dir,

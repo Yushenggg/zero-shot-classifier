@@ -5,9 +5,9 @@ log-probabilities (including EOS) from a local `transformers` model.
 Vision-language is the default; text and image requests share one scoring path.
 
 ## Layout
-- `zero_shot/core/` — interface-independent logic (`classifier.py`, `scorer.py`, `config.py`, `image_utils.py`)
+- `zero_shot/core/` — interface-independent logic (`classifier.py`, `scorer.py`, `config.py`, `models.py`, `image_utils.py`)
 - `zero_shot/interfaces/cli/` — `zero-shot` command
-- `zero_shot/interfaces/server/` — `zero-shot-serve` command, FastAPI app, `static/` UI
+- `zero_shot/interfaces/server/` — `zero-shot-serve` command, FastAPI app (`app.py`), HTTP schemas (`schemas.py`), `static/` UI
 - `config.toml` — default config (GPU, vision-language)
 - `config.cpu.toml` — CPU preset (SmolVLM-500M-Instruct)
 - `examples/` — request bodies

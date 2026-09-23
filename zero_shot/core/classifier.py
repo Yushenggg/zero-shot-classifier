@@ -2,77 +2,29 @@ from __future__ import annotations
 
 import json
 import math
-from dataclasses import dataclass, field
 from typing import Any
 
-from .scorer import DEFAULT_MODEL_ID, SequenceScore, TokenScore, get_scorer
+from .models import (
+    SUPPORTED_TYPES,
+    ChoiceQuestion,
+    Classification,
+    NoulQuestion,
+    OptionScore,
+    QuestionSpec,
+    ScoreQuestion,
+    SequenceScore,
+    parse_question,
+    parse_questions,
+)
+from .scorer import DEFAULT_MODEL_ID, get_scorer
 
-SUPPORTED_TYPES = ("choice", "noul", "score")
-
-
-@dataclass
-class OptionScore:
-    option: str
-    continuation: str = ""
-    tokens: list[TokenScore] = field(default_factory=list)
-    eos_logprob: float | None = None
-    logprob: float | None = None
-    calibrated_logprob: float | None = None
-    probability: float = 0.0
-
-    def to_dict(self) -> dict[str, Any]:
-        out = {
-            "option": self.option,
-            "continuation": self.continuation,
-            "tokens": [t.to_dict() for t in self.tokens],
-            "eos_logprob": self.eos_logprob,
-            "logprob": self.logprob,
-            "probability": self.probability,
-        }
-        if self.calibrated_logprob is not None:
-            out["calibrated_logprob"] = self.calibrated_logprob
-        return out
-
-
-@dataclass
-class Classification:
-    """One answered question.
-
-    Mirrors the TypeSafe answer shapes: `choice` for choice questions, `noul` for
-    yes/no, and `score` (+ `legend`) for ordered scales. `scores` always carries
-    the per-option detail; `confidence` is only set for choice/score.
-    """
-
-    name: str
-    type: str
-    prompt: str
-    scores: list[OptionScore]
-    choice: str | None = None
-    noul: float | None = None
-    score: float | None = None
-    legend: dict[str, str] | None = None
-    confidence: float | None = None
-    input_tokens: int = 0
-    output_tokens: int = 0
-
-    def to_dict(self) -> dict[str, Any]:
-        out: dict[str, Any] = {
-            "name": self.name,
-            "type": self.type,
-            "prompt": self.prompt,
-            "probabilities": {s.option: s.probability for s in self.scores},
-            "scores": [s.to_dict() for s in self.scores],
-        }
-        if self.type == "choice":
-            out["choice"] = self.choice
-        elif self.type == "noul":
-            out["noul"] = self.noul
-        elif self.type == "score":
-            out["score"] = self.score
-            out["legend"] = self.legend
-        if self.confidence is not None:
-            out["confidence"] = self.confidence
-        return out
+__all__ = [
+    "SUPPORTED_TYPES",
+    "Classification",
+    "OptionScore",
+    "classify",
+    "classify_one",
+]
 
 
 def _render(value: Any) -> str:
@@ -84,25 +36,20 @@ def _render(value: Any) -> str:
     return json.dumps(value, indent=2, ensure_ascii=False, default=str)
 
 
-def _build_question(name: str, spec: dict[str, Any], state: Any) -> tuple[str, list[tuple[str, str]]]:
+def _build_question(
+    name: str, spec: QuestionSpec, state: Any
+) -> tuple[str, list[tuple[str, str]]]:
     """Return (prompt, options) where options is a list of (option_id, continuation)."""
-    qtype = spec.get("type")
-    if qtype not in SUPPORTED_TYPES:
-        raise ValueError(f"Question '{name}' has unsupported type {qtype!r}; use one of {SUPPORTED_TYPES}")
-
     header = (
         "You are a precise zero-shot classifier. Use only the context and the "
         "instructions.\n\n"
         f"# CONTEXT\n{_render(state)}\n\n"
-        f"# TASK\n{_render(spec.get('instructions', ''))}\n\n"
+        f"# TASK\n{_render(spec.instructions)}\n\n"
     )
 
-    if qtype == "choice":
-        criteria = spec.get("criteria") or {}
-        if not criteria:
-            raise ValueError(f"Question '{name}' (choice) needs a non-empty criteria map")
+    if isinstance(spec, ChoiceQuestion):
         criteria_lines = [
-            f"{key}: {_render(desc)}" for key, desc in criteria.items() if _render(desc)
+            f"{key}: {_render(desc)}" for key, desc in spec.criteria.items() if _render(desc)
         ]
         criteria_block = (
             f"# CRITERIA\n" + "\n".join(criteria_lines) + "\n\n" if criteria_lines else ""
@@ -113,9 +60,9 @@ def _build_question(name: str, spec: dict[str, Any], state: Any) -> tuple[str, l
             + "# ANSWER\nRespond with exactly one option key and nothing else.\n"
             + f'The best option for "{name}" is:'
         )
-        options = [(key, key) for key in criteria]
+        options = [(key, key) for key in spec.criteria]
 
-    elif qtype == "noul":
+    elif isinstance(spec, NoulQuestion):
         prompt = (
             header
             + "# ANSWER\nRespond with exactly one word, yes or no, and nothing else.\n"
@@ -123,12 +70,8 @@ def _build_question(name: str, spec: dict[str, Any], state: Any) -> tuple[str, l
         )
         options = [("true", "yes"), ("false", "no")]
 
-    else:  # score
-        levels = spec.get("criteria")
-        if not isinstance(levels, list) or len(levels) < 2:
-            raise ValueError(f"Question '{name}' (score) needs 2-10 ordered criteria levels")
-        if len(levels) > 10:
-            raise ValueError(f"Question '{name}' (score) has {len(levels)} levels; the max is 10")
+    else:  # ScoreQuestion
+        levels = spec.criteria
         scale = "\n".join(f"{i}: {_render(level)}" for i, level in enumerate(levels))
         prompt = (
             header
@@ -160,7 +103,7 @@ def _softmax(scores: list[OptionScore], temperature: float) -> None:
 
 def classify_one(
     name: str,
-    spec: dict[str, Any],
+    spec: QuestionSpec | dict[str, Any],
     state: Any,
     *,
     model_id: str = DEFAULT_MODEL_ID,
@@ -174,7 +117,8 @@ def classify_one(
     calibration_context: str = "N/A",
     image: Any = None,
 ) -> Classification:
-    prompt, options = _build_question(name, spec, state)
+    question = parse_question(spec)
+    prompt, options = _build_question(name, question, state)
     scorer = get_scorer(model_id, save_to=save_to, device=device, gpu=gpu, quantize=quantize)
     texts = [text for _, text in options]
     # Vision prompts end at the assistant generation prompt, so the option
@@ -194,7 +138,7 @@ def classify_one(
     # same chat template as the vision main pass so only the context differs.
     null_by_text: dict[str, float] = {}
     if calibrate:
-        null_prompt, _ = _build_question(name, spec, calibration_context)
+        null_prompt, _ = _build_question(name, question, calibration_context)
         null_scores = scorer.score_options(
             null_prompt, texts, use_kv_cache=use_kv_cache, image=None,
             add_leading_space=add_leading_space, chat_template=image is not None,
@@ -232,30 +176,30 @@ def classify_one(
     winner = max(ranked, key=lambda s: s.probability) if ranked else None
     output_tokens = (len(winner.tokens) + 1) if winner else 0
 
-    qtype = spec["type"]
+    qtype = question.type
     if qtype == "choice":
         choice = winner.option if winner else None
         confidence = sum(s.probability**2 for s in scores)
         return Classification(
-            name, qtype, prompt, scores, choice=choice, confidence=confidence,
-            input_tokens=input_tokens, output_tokens=output_tokens,
+            name=name, type=qtype, prompt=prompt, scores=scores, choice=choice,
+            confidence=confidence, input_tokens=input_tokens, output_tokens=output_tokens,
         )
 
     if qtype == "noul":
         yes = next((s.probability for s in scores if s.option == "true"), 0.0)
         return Classification(
-            name, qtype, prompt, scores, noul=yes,
+            name=name, type=qtype, prompt=prompt, scores=scores, noul=yes,
             input_tokens=input_tokens, output_tokens=output_tokens,
         )
 
     # score
-    levels = spec["criteria"]
+    levels = question.criteria
     value = sum(int(s.option) * s.probability for s in scores)
     legend = {str(i): _render(levels[i]) for i in range(len(levels))}
     confidence = sum(s.probability**2 for s in scores)
     return Classification(
-        name, qtype, prompt, scores, score=value, legend=legend, confidence=confidence,
-        input_tokens=input_tokens, output_tokens=output_tokens,
+        name=name, type=qtype, prompt=prompt, scores=scores, score=value, legend=legend,
+        confidence=confidence, input_tokens=input_tokens, output_tokens=output_tokens,
     )
 
 
@@ -292,8 +236,7 @@ def classify(
     `calibration_context`) is subtracted before the softmax, removing
     surface-form/option bias.
     """
-    if not isinstance(question, dict) or not question:
-        raise ValueError("question must be a non-empty JSON object")
+    specs = parse_questions(question)
     return [
         classify_one(
             name,
@@ -310,5 +253,5 @@ def classify(
             calibration_context=calibration_context,
             image=image,
         )
-        for name, spec in question.items()
+        for name, spec in specs.items()
     ]
