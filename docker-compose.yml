@@ -1,4 +1,4 @@
-# Standard service: CPU + SmolVLM-500M-Instruct (Idefics3 VLM, int8, ~500 MB RAM).
+# Standard service: CPU + SmolVLM-500M-Instruct (Idefics3 VLM, fp32, ~2 GB RAM).
 #   docker compose up --build
 #
 # Model weights live in the bind-mounted ./models directory, so they persist

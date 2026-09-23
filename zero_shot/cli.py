@@ -119,8 +119,8 @@ def main(argv: list[str] | None = None) -> int:
         "--quantize",
         default=None,
         choices=("auto", "bf16", "fp32", "int8"),
-        help="Compute precision: 'auto' (bf16 where hardware-accelerated, else "
-        "fp32), 'bf16', 'fp32', or 'int8' dynamic quantization. Overrides the config file.",
+        help="Compute precision: 'auto' (bf16 on GPU, fp32 on CPU), 'bf16', "
+        "'fp32', or 'int8' dynamic quantization. Overrides the config file.",
     )
     parser.add_argument(
         "--temperature",

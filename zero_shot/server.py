@@ -14,9 +14,11 @@ from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from .classifier import classify
 from .config import load_config
+from .image_utils import downscale_to_byte_limit
 from .scorer import get_scorer, loaded_scorer
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -24,11 +26,23 @@ CONFIG = load_config()
 logger = logging.getLogger("uvicorn.error")
 _RESOLVED_DEVICE: str | None = None
 
-# Upload ceiling for image requests. The model processor downscales to whatever
-# resolution it wants anyway, so this only guards the decode step against absurd
-# uploads (a decompression bomb / multi-hundred-MB file). Override with
-# ZERO_SHOT_MAX_IMAGE_MB.
+# Target size for image uploads: anything larger is downscaled + re-encoded as
+# JPEG until it fits (`downscale_to_byte_limit`). MAX_UPLOAD_BYTES is the hard
+# ceiling rejected outright, so one request can't make us read/decode unbounded
+# data. The decode itself is also guarded by Pillow's decompression-bomb limit.
+# Override with ZERO_SHOT_MAX_IMAGE_MB / ZERO_SHOT_MAX_UPLOAD_MB.
 MAX_IMAGE_BYTES = int(float(os.environ.get("ZERO_SHOT_MAX_IMAGE_MB", "16")) * 1024 * 1024)
+MAX_UPLOAD_BYTES = int(float(os.environ.get("ZERO_SHOT_MAX_UPLOAD_MB", "64")) * 1024 * 1024)
+
+
+def _too_large_response() -> JSONResponse:
+    return JSONResponse(
+        status_code=413,
+        content={
+            "error": f"`file` exceeds the {MAX_UPLOAD_BYTES // (1024 * 1024)} MB upload limit "
+            "(set ZERO_SHOT_MAX_UPLOAD_MB to raise it)"
+        },
+    )
 
 
 @asynccontextmanager
@@ -207,24 +221,23 @@ async def classify_image_endpoint(
                 status_code=422, content={"error": f"`state` is not valid JSON: {exc}"}
             )
 
-    if file.size is not None and file.size > MAX_IMAGE_BYTES:
-        return JSONResponse(
-            status_code=413,
-            content={
-                "error": f"`file` exceeds the {MAX_IMAGE_BYTES // (1024 * 1024)} MB limit "
-                "(set ZERO_SHOT_MAX_IMAGE_MB to raise it)"
-            },
-        )
+    if file.size is not None and file.size > MAX_UPLOAD_BYTES:
+        return _too_large_response()
     image = await file.read()
     if not image:
         return JSONResponse(status_code=422, content={"error": "`file` is empty"})
+    if len(image) > MAX_UPLOAD_BYTES:
+        return _too_large_response()
     if len(image) > MAX_IMAGE_BYTES:
-        return JSONResponse(
-            status_code=413,
-            content={"error": f"`file` exceeds the {MAX_IMAGE_BYTES // (1024 * 1024)} MB limit"},
-        )
+        try:
+            image = await run_in_threadpool(
+                downscale_to_byte_limit, image, MAX_IMAGE_BYTES
+            )
+        except ValueError as exc:
+            return JSONResponse(status_code=400, content={"error": str(exc)})
 
-    return _run_classify(
+    return await run_in_threadpool(
+        _run_classify,
         questions_payload,
         state_payload,
         image=image,

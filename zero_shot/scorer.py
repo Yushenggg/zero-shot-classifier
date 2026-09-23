@@ -17,30 +17,15 @@ _MIN_AVAILABLE_GB = 9.0
 _QUANTIZE_MODES = ("auto", "bf16", "fp32", "int8")
 
 
-def _cpu_has_hw_bf16() -> bool:
-    """True if the CPU has hardware bfloat16 (AVX512_BF16 or AMX_BF16).
-
-    Without it PyTorch emulates bf16, which is much slower than fp32 on Intel
-    consumer chips since 12th gen (AVX-512 is fused off there).
-    """
-    import torch
-
-    if torch.backends.cpu.get_cpu_capability() != "AVX512":
-        return False
-    try:
-        flags = Path("/proc/cpuinfo").read_text()
-    except OSError:
-        return True  # can't read flags; assume AVX-512 implies BF16
-    return "avx512_bf16" in flags or "amx_bf16" in flags
-
-
 def resolve_precision(device: str, quantize: str = "auto") -> tuple[str, bool]:
     """Return ``(dtype_name, quantized)`` for a run.
 
-    - ``auto``: bf16 when the device has hardware bf16 (CUDA, or a CPU with
-      AVX512_BF16/AMX), otherwise fp32 on CPU (avoids PyTorch's slow bf16
-      emulation).
-    - ``bf16`` / ``fp32``: force that dtype.
+    - ``auto``: bf16 on CUDA, **fp32 on CPU**. CPU stays on fp32 even where the
+      hardware supports bf16 (AVX512_BF16/AMX): the bf16 KV-cached path drifts
+      slightly from the exact path, while fp32 keeps them identical, and the
+      extra memory is small. It also avoids PyTorch's slow emulated bf16 on
+      Intel consumer chips since 12th gen (AVX-512 fused off).
+    - ``bf16`` / ``fp32``: force that dtype (set ``bf16`` for CPU speed).
     - ``int8``: dynamic int8 quantization on CPU (loaded as fp32). CUDA is never
       quantized.
     """
@@ -61,10 +46,8 @@ def resolve_precision(device: str, quantize: str = "auto") -> tuple[str, bool]:
         return ("bfloat16", False)
     if mode == "int8":
         return ("float32", True) if is_cpu else ("bfloat16", False)
-    # auto
-    if not is_cpu:
-        return ("bfloat16", False)
-    return ("bfloat16", False) if _cpu_has_hw_bf16() else ("float32", False)
+    # auto: bf16 on GPU, fp32 on CPU
+    return ("float32", False) if is_cpu else ("bfloat16", False)
 
 
 def _quantize_dynamic(model):
@@ -285,7 +268,13 @@ class Scorer:
         self.eos_token_id = int(eos)
 
         # None = untested, True = cached path works, False = fall back to exact.
+        # Kept separate per modality: a vision-specific cache failure must not
+        # also disable the text cache (and vice versa).
         self._kv_cache_ok: bool | None = None
+        self._vision_kv_cache_ok: bool | None = None
+        # Vision scoring relies on model-level mutable state (`rope_deltas` on
+        # M-RoPE models), so serialize it across threads.
+        self._vision_lock = threading.Lock()
 
     def score_options(
         self,
@@ -315,9 +304,10 @@ class Scorer:
         if image is not None:
             # The chat template already ends with the assistant generation prompt,
             # so the option continues immediately (no synthetic leading space).
-            return self._score_options_vision(
-                prefix_text, options, False, use_kv_cache, image
-            )
+            with self._vision_lock:
+                return self._score_options_vision(
+                    prefix_text, options, False, use_kv_cache, image
+                )
 
         if use_kv_cache and self._kv_cache_ok is not False:
             try:
@@ -464,12 +454,27 @@ class Scorer:
         """Coerce a PIL image, raw bytes, or a filesystem path into a PIL image."""
         from PIL import Image
 
+        def _decode(fp):
+            try:
+                with Image.open(fp) as im:
+                    im.load()
+                    return im.convert("RGB")
+            except Image.DecompressionBombError as exc:
+                raise ValueError(
+                    f"Image is too large to decode safely ({exc}); refusing to "
+                    "expand it in memory."
+                ) from exc
+            except Image.UnidentifiedImageError as exc:
+                raise ValueError(f"Could not decode image: {exc}") from exc
+
         if isinstance(image, Image.Image):
             return image.convert("RGB")
         if isinstance(image, (bytes, bytearray, memoryview)):
-            return Image.open(io.BytesIO(bytes(image))).convert("RGB")
+            return _decode(io.BytesIO(bytes(image)))
         if isinstance(image, (str, os.PathLike)):
-            return Image.open(image).convert("RGB")
+            if not os.path.exists(image):
+                raise ValueError(f"Image file not found: {image}")
+            return _decode(image)
         raise TypeError(f"Unsupported image type {type(image).__name__}")
 
     def _vision_text(self, prefix_text: str) -> str:
@@ -505,9 +510,8 @@ class Scorer:
                 return self.processor.apply_chat_template(
                     messages, tokenize=False, add_generation_prompt=True, **extra
                 )
-            except TypeError as exc:  # processor doesn't accept enable_thinking
+            except (TypeError, ValueError) as exc:  # processor rejects enable_thinking
                 last_error = exc
-                continue
             except Exception as exc:  # noqa: BLE001
                 raise RuntimeError(
                     f"{type(self.processor).__name__} cannot build a chat template "
@@ -552,11 +556,11 @@ class Scorer:
             )
         image = self._as_image(image)
 
-        if use_kv_cache and self._kv_cache_ok is not False:
+        if use_kv_cache and self._vision_kv_cache_ok is not False:
             try:
                 result = self._vision_cached(prefix_text, options, add_leading_space, image)
             except Exception as exc:  # noqa: BLE001 - any failure => fall back
-                self._kv_cache_ok = False
+                self._vision_kv_cache_ok = False
                 logger.warning(
                     "KV cache unavailable for vision with %s (%s: %s); falling back "
                     "to exact scoring.",
@@ -565,7 +569,7 @@ class Scorer:
                     exc,
                 )
             else:
-                self._kv_cache_ok = True
+                self._vision_kv_cache_ok = True
                 return result
         return self._vision_exact(prefix_text, options, add_leading_space, image)
 

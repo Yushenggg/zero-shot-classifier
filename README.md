@@ -20,7 +20,7 @@ Two configs ship by default; pick whichever fits the host.
 | Config | Model | Hardware | Notes |
 |---|---|---|---|
 | `config.toml` *(default)* | `Qwen/Qwen3-VL-4B-Instruct` | GPU (RTX 5060 Ti) | Vision-language: serves text and image from one checkpoint. ~8 GB bf16. |
-| `config.cpu.toml` | `HuggingFaceTB/SmolVLM-500M-Instruct` | CPU | Idefics3 VLM, ~500M params, int8 → ~500 MB RAM. Lower quality, runs anywhere, no `trust_remote_code` needed. |
+| `config.cpu.toml` | `HuggingFaceTB/SmolVLM-500M-Instruct` | CPU | Idefics3 VLM, ~500M params, fp32 → ~2 GB RAM. Lower quality, runs anywhere, no `trust_remote_code` needed. |
 
 Pass a config to the CLI or set `ZERO_SHOT_CONFIG`:
 
@@ -100,17 +100,18 @@ absolute deltas are smaller than the previous text-only Qwen3-4B baseline (which
 saw a 4.36 swing on `technical`); VL calibration appears less order-sensitive
 in practice.
 
-**SmolVLM-500M-Instruct** (`config.cpu.toml`, CPU, int8):
+**SmolVLM-500M-Instruct** (`config.cpu.toml`, CPU, fp32):
 
 | option | calibrated logprob, order A | order B | Δ |
 |---|---|---|---|
-| billing  | -0.068 | -0.029 | +0.04 |
-| technical | -0.034 | +0.389 | **+0.42** |
-| sales    | +0.411 | -0.044 | -0.46 |
+| billing  | -0.225 | -0.126 | +0.10 |
+| technical | -0.078 | +0.678 | **+0.76** |
+| sales    | +1.034 | +0.038 | -1.00 |
 
-The winner *does* change between orders (`sales` vs `technical`), and confidence
-is much lower (≈0.35) — the small model is genuinely unsure and order tips it.
-Take note if you are near the decision boundary, especially on CPU.
+The winner *does* change between orders (`sales` vs `technical`), and the model
+is unsure either way (confidence 0.62 vs 0.51) — the small model is genuinely
+near the boundary and order tips it. Take note if you are near the decision
+boundary, especially on CPU.
 
 ## CPU vs GPU
 
@@ -128,21 +129,25 @@ uv pip install --reinstall -r requirements-gpu.txt   # restore the CUDA build
 `rtx_5060_ti`), or `device = "cpu"` to force CPU.
 
 The `config.cpu.toml` preset forces `device = "cpu"` and uses
-**SmolVLM-500M-Instruct** with `quantize = "int8"`: ~500M params, ~500 MB RAM,
-runs on a laptop. Quality is lower than Qwen3-VL-4B (the winner can flip
-between criteria orderings); prefer `config.toml` whenever a GPU is available.
+**SmolVLM-500M-Instruct** with `quantize = "fp32"`: ~500M params, ~2 GB RAM,
+runs on a laptop. fp32 keeps the KV-cached scores identical to the exact path
+and sidesteps emulated bf16 on mobile/consumer Intel CPUs. Quality is lower than
+Qwen3-VL-4B (the winner can flip between criteria orderings); prefer
+`config.toml` whenever a GPU is available.
 
 ### CPU precision (`quantize`)
 
-`quantize = "auto"` uses **bf16** where it is hardware-accelerated — CUDA, or a
-CPU advertising `AVX512_BF16`/`AMX_BF16` (e.g. AMD Zen 4/5) — and **fp32**
-otherwise. This matters on Intel consumer CPUs since 12th gen (Alder Lake on),
-where AVX-512 is fused off: PyTorch then *emulates* bf16, which is several times
-slower than fp32 (the SmolVLM CPU image can take seconds per request there).
-`quantize = "fp32"` or `"bf16"` forces a dtype, and `"int8"` applies dynamic
-quantization on CPU — faster on AVX2+VNNI and ~4x less RAM, but it perturbs
-logprobs, so near-tie predictions can shift. CUDA is never quantized. Overridable
-with `--quantize` or `$ZERO_SHOT_QUANTIZE`.
+`quantize = "auto"` uses **bf16** on CUDA and **fp32** on CPU. CPU stays on fp32
+even where the hardware supports bf16 (`AVX512_BF16`/`AMX_BF16`, e.g. AMD Zen
+4/5): bf16 drifts slightly from the exact path under KV-cache reuse, whereas
+fp32 keeps the cached and exact scores identical, and the extra memory is small.
+This is also why the CPU presets no longer quantize — it avoids PyTorch's
+*emulated* bf16 on Intel consumer CPUs since 12th gen (Alder Lake on), where
+AVX-512 is fused off and bf16 is several times slower than fp32. Set
+`quantize = "bf16"` explicitly for CPU speed, or `"fp32"` to force it. `"int8"`
+applies dynamic quantization on CPU — faster on AVX2+VNNI and ~4x less RAM, but
+it perturbs logprobs, so near-tie predictions can shift. CUDA is never
+quantized. Overridable with `--quantize` or `$ZERO_SHOT_QUANTIZE`.
 
 ## Usage
 
@@ -222,17 +227,20 @@ curl -F file=@photo.jpg \
      http://127.0.0.1:8000/v1/classify/image
 ```
 
-Uploads are capped at 16 MB per file (set `ZERO_SHOT_MAX_IMAGE_MB` to change it);
-the model processor downscales to its own resolution, so the cap only guards the
-decode step against oversized files.
+Uploads up to 64 MB are accepted. Anything above 16 MB is automatically
+downscaled and re-encoded as JPEG until it fits, so you don't have to resize by
+hand (`ZERO_SHOT_MAX_IMAGE_MB` sets the target, `ZERO_SHOT_MAX_UPLOAD_MB` the hard
+ceiling that is rejected with HTTP 413). The model processor then downscales to
+its own resolution.
 
 In the web UI, switch the **Text / Image** toggle to Image, attach a file, and
 Classify. The State editor is replaced by an optional **Add text context**
 field — attach a `state` JSON there only when the image alone is not enough
 (the API accepts `state` alongside the file either way). The Text/Image toggle is
 automatically disabled when the loaded model is text-only. The image + prompt are
-prefilled once and the KV cache is reused across options, so the calibration pass
-shares the same image prefill. Passing `--image` to a text-only model fails with
+prefilled once and the KV cache is reused across options. The calibration pass
+deliberately runs text-only — the image *is* the content, so calibrating against
+it would cancel the signal. Passing `--image` to a text-only model fails with
 a clear error.
 
 ### Web UI

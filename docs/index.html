@@ -168,8 +168,9 @@
       I went ahead and tried it with <span class="mono">Qwen3-VL-4B-Instruct</span>,
       and &mdash; surprisingly &mdash; it worked as expected. The KV cache reuse
       carries over: the image + shared prompt is prefilled once, then each option
-      continuation is scored against it. Calibration works the same way too; the
-      calibration pass shares the same image prefill, so the second pass is cheap.
+      continuation is scored against it. Calibration is text-only by design
+      &mdash; the image <em>is</em> the content, so using it as its own null
+      context would cancel the very signal being calibrated.
       The <span class="mono">/v1/classify/image</span> endpoint just takes a
       multipart upload alongside the usual JSON questions and runs the exact same
       scoring path as the text endpoint.
@@ -177,7 +178,7 @@
     <p>
       For machines without a usable GPU, the same idea works with
       <span class="mono">SmolVLM-500M-Instruct</span> at
-      <span class="mono">int8</span> (~500M params, ~500&nbsp;MB RAM). Quality on
+      <span class="mono">fp32</span> (~500M params, ~2&nbsp;GB RAM). Quality on
       edge cases is lower than Qwen3-VL-4B &mdash; the criteria-order bias
       shows up more easily, and the winner can flip between orderings &mdash;
       but for short, direct classification prompts it fits in essentially any

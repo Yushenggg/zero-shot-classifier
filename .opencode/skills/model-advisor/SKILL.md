@@ -1,6 +1,6 @@
 ---
 name: model-advisor
-description: Use when the user asks which model to run for this project, wants to switch the default model, or asks what hardware they need. Primarily for GPU hosts — detects VRAM, websearches for current vision-language checkpoints, recommends one with alternatives, and — after the user picks — downloads the weights and updates the relevant config. CPU hosts get pointed at the existing config.cpu.toml (SmolVLM-500M-Instruct, int8) with brief tuning guidance. Default-mode is vision-language unless the user explicitly asks for text-only.
+description: Use when the user asks which model to run for this project, wants to switch the default model, or asks what hardware they need. Primarily for GPU hosts — detects VRAM, websearches for current vision-language checkpoints, recommends one with alternatives, and — after the user picks — downloads the weights and updates the relevant config. CPU hosts get pointed at the existing config.cpu.toml (SmolVLM-500M-Instruct, fp32) with brief tuning guidance. Default-mode is vision-language unless the user explicitly asks for text-only.
 ---
 
 # Model advisor
@@ -88,9 +88,9 @@ Bigger models just waste RAM and slow everything down without giving you
 better decisions on most prompts.
 
 Default rule: **use the smallest model that meets your quality bar**. The
-project already ships `config.cpu.toml` (SmolVLM-500M-Instruct, int8,
-~500 MB RAM) — that's the recommended starting point. Move down to
-`SmolVLM-256M-Instruct` (~250 MB) if your CPU is very slow or you need to
+project already ships `config.cpu.toml` (SmolVLM-500M-Instruct, fp32,
+~2 GB RAM) — that's the recommended starting point. Move down to
+`SmolVLM-256M-Instruct` (~1 GB fp32) if your CPU is very slow or you need to
 fit alongside a browser; move up to `SmolVLM2-2.2B-Instruct` only if you've
 measured the smaller one and it isn't good enough.
 
@@ -100,13 +100,18 @@ Quick CPU capability check (run before deciding quantization):
 grep -oE 'avx2|avx512f|avx512_bf16|avx_vnni|amx_tile' /proc/cpuinfo | sort -u
 ```
 
-- `avx2` + `avx_vnni` (most Intel/AMD since ~2017): int8 dynamic quant is
-  ~2× faster than bf16. Stick with `quantize = "int8"`.
-- `avx512_bf16` or `amx_tile` (Zen 4/5, Sapphire Rapids): bf16 is hardware-
-  accelerated; int8 is still slightly faster but bf16 keeps the
-  probabilities cleaner.
-- Older CPUs without AVX2: int8 is still your best bet but expect slow
-  load times and ~5–10 s per request.
+- `quantize = "auto"` is fp32 on CPU (bf16 only on GPU). fp32 keeps the
+  KV-cached scores identical to the exact path and avoids emulated bf16; on a
+  500M model the ~2 GB RAM cost is negligible, so this is the default.
+- `avx512_bf16` or `amx_tile` (Zen 4/5, Sapphire Rapids): set
+  `quantize = "bf16"` explicitly for ~2x speed (auto won't pick it on CPU); the
+  logprob drift is tiny (<0.1 nats). Only if speed matters more than
+  bit-exactness.
+- `avx2` + `avx_vnni` and tight on RAM or slow: `quantize = "int8"` is ~2x
+  faster and ~0.5 GB, but it perturbs logprobs (near-tie predictions can
+  shift), so only use it if the accuracy trade-off is acceptable.
+- Older CPUs without AVX2: stay on fp32; expect slow load times and several
+  seconds per request.
 
 If the user wants text-only on CPU (smaller model, no vision tower cost),
 point them at `HuggingFaceTB/SmolLM2-360M-Instruct` or
