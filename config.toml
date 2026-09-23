@@ -1,13 +1,19 @@
 # Model settings for the zero-shot classifier.
 
-# Hugging Face model id (or a local directory path).
-model = "Qwen/Qwen3-4B-Instruct-2507"
+# Hugging Face model id (or a local directory path). The default is the
+# Qwen3-VL-4B vision-language model: it serves both text and image requests
+# through one config, so the HTTP API + UI auto-handle either mode. Any
+# transformers-compatible multimodal checkpoint works — pass --config to point
+# at a different one (e.g. config.cpu.toml for the CPU-only SmolVLM-500M path).
+# For a reasoning variant, swap in "Qwen/Qwen3-VL-4B-Thinking" (the scorer
+# keeps it in direct-answer mode via enable_thinking=False).
+model = "Qwen/Qwen3-VL-4B-Instruct"
 
 # Directory to download and load the model from. Once populated, the model is
 # loaded from disk and Hugging Face is not contacted again.
 # Relative paths are resolved from this project directory.
 # Set to "" to use the default Hugging Face cache instead.
-save_to = "models/qwen3-4b-instruct-2507"
+save_to = "models/qwen3-vl-4b-instruct"
 
 # Compute device: "auto" (GPU if available, else CPU), "cpu", or "gpu"/"cuda".
 # `uv sync` installs the CUDA build by default; switch to CPU with
@@ -17,18 +23,21 @@ device = "auto"
 # Which GPU to run on when device = "gpu". Supported: "rtx_5060_ti".
 gpu = "rtx_5060_ti"
 
-# Compute precision. "auto" uses bf16 where it is hardware-accelerated (CUDA,
-# or a CPU with AVX512_BF16/AMX such as Zen 4/5) and fp32 otherwise, so Intel
-# consumer CPUs (12th gen+, no AVX-512) avoid PyTorch's slow bf16 emulation.
-# "bf16"/"fp32" force a dtype; "int8" applies dynamic quantization on CPU
-# (faster on AVX2+VNNI and ~4x less RAM, but perturbs logprobs so near-tie
-# predictions can shift). CUDA is never quantized.
+# Compute precision. "auto" uses bf16 on CUDA and fp32 on CPU: CPU bf16 drifts
+# slightly from the exact path under KV-cache reuse, so we keep fp32 there even
+# on hardware that accelerates bf16 (AVX512_BF16/AMX). This also avoids
+# PyTorch's slow emulated bf16 on Intel consumer CPUs (12th gen+, no AVX-512).
+# "bf16"/"fp32" force a dtype (bf16 is ~2x faster on CPU); "int8" applies
+# dynamic quantization on CPU (faster on AVX2+VNNI and ~4x less RAM, but
+# perturbs logprobs so near-tie predictions can shift). CUDA is never quantized.
 quantize = "auto"
 
 # Reuse one KV cache for the shared prompt across options (~4x faster).
 # On by default. Approximate: uses the cached attention path, so rare near-tie
 # tokens can shift. If a model can't reuse its cache, the scorer falls back to
 # exact scoring and logs a warning. Set false to always use the exact path.
+# For VL models the vision prefill happens once and only the option
+# continuation is re-run.
 kv_cache = true
 
 # Softmax temperature over the option scores (default 1.0). Does NOT change the

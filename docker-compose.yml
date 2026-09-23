@@ -1,13 +1,13 @@
-# Standard service: CPU + SmolLM2-360M-Instruct.
+# Standard service: CPU + SmolVLM-500M-Instruct (Idefics3 VLM, fp32, ~2 GB RAM).
 #   docker compose up --build
 #
 # Model weights live in the bind-mounted ./models directory, so they persist
 # across rebuilds. The config file is mounted read-only so the container always
 # sees your local edits without a rebuild.
 #
-# A GPU service (CUDA + Qwen3-4B-Instruct-2507) is provided but commented out:
-# building it pulls the CUDA PyTorch wheels plus the ~GB of NVIDIA/CUDA deps, so
-# it is opt-in. To use it, uncomment the `zero-shot-gpu` service below and run
+# A GPU service (CUDA + Qwen3-VL-4B) is provided but commented out: building it
+# pulls the CUDA PyTorch wheels plus the ~GB of NVIDIA/CUDA deps, so it is
+# opt-in. To use it, uncomment the `zero-shot-gpu` service below and run
 # (requires the NVIDIA Container Toolkit on the host):
 #   docker compose --profile gpu up --build zero-shot-gpu
 services:
@@ -21,12 +21,12 @@ services:
       - "8000:8000"
     volumes:
       - ./models:/app/models
-      - ./config.smollm.toml:/app/config.smollm.toml:ro
+      - ./config.cpu.toml:/app/config.cpu.toml:ro
     environment:
-      ZERO_SHOT_CONFIG: /app/config.smollm.toml
+      ZERO_SHOT_CONFIG: /app/config.cpu.toml
     restart: unless-stopped
 
-  # GPU service: CUDA + the default Qwen3-4B-Instruct-2507 config.
+  # GPU service: CUDA + the default Qwen3-VL-4B config.
   # Uncomment to enable; build with `--build-arg TORCH_BACKEND=cu130`.
   # zero-shot-gpu:
   #   profiles: ["gpu"]

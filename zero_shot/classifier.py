@@ -172,20 +172,33 @@ def classify_one(
     use_kv_cache: bool = False,
     calibrate: bool = False,
     calibration_context: str = "N/A",
+    image: Any = None,
 ) -> Classification:
     prompt, options = _build_question(name, spec, state)
     scorer = get_scorer(model_id, save_to=save_to, device=device, gpu=gpu, quantize=quantize)
     texts = [text for _, text in options]
+    # Vision prompts end at the assistant generation prompt, so the option
+    # follows immediately (no synthetic leading space); text prompts end with
+    # "... is:" and need the space. Use the same form for the calibration pass
+    # so its priors are subtracted from identically-tokenized options.
+    add_leading_space = image is None
     sequence_scores: list[SequenceScore] = scorer.score_options(
-        prompt, texts, use_kv_cache=use_kv_cache
+        prompt, texts, use_kv_cache=use_kv_cache, image=image,
+        add_leading_space=add_leading_space,
     )
     by_text = {s.option: s for s in sequence_scores}
 
-    # Contextual calibration: subtract each option's content-free prior.
+    # Contextual calibration: subtract each option's content-free prior. For
+    # image questions the null pass stays text-only -- the image *is* the signal,
+    # so calibrating against it would cancel it -- but it is rendered through the
+    # same chat template as the vision main pass so only the context differs.
     null_by_text: dict[str, float] = {}
     if calibrate:
         null_prompt, _ = _build_question(name, spec, calibration_context)
-        null_scores = scorer.score_options(null_prompt, texts, use_kv_cache=use_kv_cache)
+        null_scores = scorer.score_options(
+            null_prompt, texts, use_kv_cache=use_kv_cache, image=None,
+            add_leading_space=add_leading_space, chat_template=image is not None,
+        )
         null_by_text = {s.option: s.total_logprob for s in null_scores}
 
     scores: list[OptionScore] = []
@@ -207,7 +220,7 @@ def classify_one(
             )
     _softmax(scores, temperature)
 
-    input_tokens = len(scorer.tokenizer(prompt)["input_ids"])
+    input_tokens = scorer.count_input_tokens(prompt, image)
     ranked = [s for s in scores if s.logprob is not None]
     winner = max(ranked, key=lambda s: s.probability) if ranked else None
     output_tokens = (len(winner.tokens) + 1) if winner else 0
@@ -252,6 +265,7 @@ def classify(
     use_kv_cache: bool = False,
     calibrate: bool = False,
     calibration_context: str = "N/A",
+    image: Any = None,
 ) -> list[Classification]:
     """Evaluate `state` against a map of typed questions.
 
@@ -287,6 +301,7 @@ def classify(
             use_kv_cache=use_kv_cache,
             calibrate=calibrate,
             calibration_context=calibration_context,
+            image=image,
         )
         for name, spec in question.items()
     ]

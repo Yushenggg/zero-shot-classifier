@@ -134,6 +134,7 @@ export function renderResults(data, questionMap) {
 function openModal(r, questionMap, timing) {
   const modal = document.getElementById("modal");
   const body = document.getElementById("modalBody");
+  modal.classList.remove("lightbox");
   body.innerHTML = "";
 
   const head = el("div", "modal-head");
@@ -190,6 +191,27 @@ function openModal(r, questionMap, timing) {
   }
 
   modal.classList.add("open");
+}
+
+export function openLightbox(src, caption) {
+  const modal = document.getElementById("modal");
+  const body = document.getElementById("modalBody");
+  body.innerHTML = "";
+
+  const head = el("div", "modal-head");
+  head.appendChild(el("h3", null, "Image"));
+  const close = el("button", "close", "×");
+  close.addEventListener("click", () => modal.classList.remove("open"));
+  head.appendChild(close);
+  body.appendChild(head);
+
+  const img = el("img", "lightbox-img");
+  img.src = src;
+  img.alt = caption || "image";
+  body.appendChild(img);
+  if (caption) body.appendChild(el("div", "qdesc", caption));
+
+  modal.classList.add("open", "lightbox");
 }
 
 export function initModal() {

@@ -9,3 +9,4 @@
 #
 --index-url https://pypi.org/simple
 torch==2.14.0
+torchvision==0.29.0

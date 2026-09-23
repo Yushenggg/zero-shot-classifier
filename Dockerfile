@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 
 # One Dockerfile, two builds:
-#   docker build -t zero-shot:cpu .                                     # CPU + SmolLM (default)
+#   docker build -t zero-shot:cpu .                                     # CPU + SmolVLM (default)
 #   docker build --build-arg TORCH_BACKEND=cu130 -t zero-shot:gpu .     # CUDA + Qwen
 #
 # TORCH_BACKEND is passed straight to `uv pip install --torch-backend`, so the
@@ -17,7 +17,7 @@ ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     UV_LINK_MODE=copy \
     PATH="/app/.venv/bin:$PATH" \
-    ZERO_SHOT_CONFIG=/app/config.smollm.toml \
+    ZERO_SHOT_CONFIG=/app/config.cpu.toml \
     ZERO_SHOT_HOST=0.0.0.0 \
     ZERO_SHOT_PORT=8000
 
@@ -41,7 +41,7 @@ RUN if [ "${TORCH_BACKEND}" != "cpu" ]; then \
       && rm -rf /var/lib/apt/lists/*; \
     fi
 
-COPY config.toml config.smollm.toml ./
+COPY config.toml config.cpu.toml ./
 
 EXPOSE 8000
 CMD ["zero-shot-serve"]
