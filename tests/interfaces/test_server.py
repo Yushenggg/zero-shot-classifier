@@ -130,3 +130,32 @@ def test_image_over_upload_limit_is_413(client, png_bytes, monkeypatch):
         data={"questions": "{}"},
     )
     assert response.status_code == 413
+
+
+def test_configure_swaps_config_and_resets_resolved_device():
+    from zero_shot.core.config import Config
+    from zero_shot.interfaces.server import app as app_module
+
+    original_config = app_module.CONFIG
+    original_device = app_module._RESOLVED_DEVICE
+    try:
+        app_module._RESOLVED_DEVICE = "cuda"
+        returned = app_module.configure(Config(model="acme/model", device="cpu"))
+        assert returned is app_module.CONFIG
+        assert app_module.CONFIG.model == "acme/model"
+        assert app_module.CONFIG.device == "cpu"
+        # A stale resolved device must not leak into /api/health.
+        assert app_module._RESOLVED_DEVICE is None
+    finally:
+        app_module.CONFIG = original_config
+        app_module._RESOLVED_DEVICE = original_device
+
+
+def test_cpu_low_config_path_points_at_bundled_preset():
+    from zero_shot.interfaces.server.main import cpu_low_config_path
+
+    path = cpu_low_config_path()
+    assert path.name == "config.cpu.toml"
+    # Run from the source tree, the bundled preset is found next to the project.
+    assert path.exists()
+

@@ -103,3 +103,10 @@ def test_config_normalizes_quantize_and_device(tmp_path):
     config = load_config(path)
     assert config.quantize == "int8"
     assert config.device == "cpu"
+
+
+def test_default_config_path_honors_env_override(tmp_path, monkeypatch):
+    path = _write_config(tmp_path, 'model = "env-path/model"\n')
+    monkeypatch.setenv("ZERO_SHOT_CONFIG", str(path))
+    # No explicit path: load_config must resolve $ZERO_SHOT_CONFIG.
+    assert load_config().model == "env-path/model"

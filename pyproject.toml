@@ -25,7 +25,7 @@ zero-shot = "zero_shot.interfaces.cli.main:main"
 zero-shot-serve = "zero_shot.interfaces.server.main:main"
 
 [dependency-groups]
-dev = ["ruff>=0.16", "pytest>=8"]
+dev = ["ruff>=0.16.8,<0.17", "pytest>=8"]
 
 [build-system]
 requires = ["hatchling"]
