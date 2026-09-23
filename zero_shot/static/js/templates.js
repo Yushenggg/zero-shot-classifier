@@ -60,4 +60,32 @@ export const templates = {
     },
     state: { input: "Help! My payouts have been failing for 3 days." },
   },
+  image: {
+    mode: "image",
+    question: {
+      screen: {
+        type: "choice",
+        instructions: "Which kind of screen is this?",
+        criteria: {
+          login: "A sign-in form",
+          checkout: "A payment or checkout page",
+          error: "An error or failure page",
+          dashboard: "An app or dashboard view",
+        },
+      },
+      has_close: {
+        type: "noul",
+        instructions: "Is a close (X) or dismiss control visible?",
+        criteria: {
+          true: "A close or dismiss control is visible",
+          false: "No close or dismiss control",
+        },
+      },
+      clutter: {
+        type: "score",
+        instructions: "How cluttered is the screen?",
+        criteria: ["Minimal", "Clean", "Busy", "Overwhelming"],
+      },
+    },
+  },
 };

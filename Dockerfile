@@ -41,7 +41,7 @@ RUN if [ "${TORCH_BACKEND}" != "cpu" ]; then \
       && rm -rf /var/lib/apt/lists/*; \
     fi
 
-COPY config.toml config.smollm.toml ./
+COPY config.toml config.smollm.toml config.vlm.toml ./
 
 EXPOSE 8000
 CMD ["zero-shot-serve"]

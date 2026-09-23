@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import io
 import logging
 import os
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from .config import DEFAULT_MODEL_ID, SUPPORTED_GPUS
 
@@ -199,7 +201,7 @@ class Scorer:
 
         import torch
         import transformers
-        from transformers import AutoConfig, AutoTokenizer
+        from transformers import AutoConfig, AutoProcessor, AutoTokenizer
 
         if device.startswith("cuda"):
             vram_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
@@ -221,7 +223,18 @@ class Scorer:
         arch = (getattr(config, "architectures", None) or [None])[0]
         model_cls = getattr(transformers, arch, None) if arch else None
         if model_cls is None:
+            model_cls = getattr(transformers, "AutoModelForImageTextToText", None)
+        if model_cls is None:
             model_cls = transformers.AutoModelForCausalLM
+
+        # Processor is only needed for multimodal (image) scoring. It also tells us
+        # whether the checkpoint has a vision tower to keep.
+        self.processor = None
+        try:
+            self.processor = AutoProcessor.from_pretrained(source, local_files_only=from_disk)
+        except Exception:  # noqa: BLE001 - text-only models have no processor
+            self.processor = None
+        self.multimodal = getattr(self.processor, "image_processor", None) is not None
 
         # Dynamic int8 quantized layers expect float32 activations, so load fp32
         # (then quantize) instead of bf16 when quantizing.
@@ -236,12 +249,24 @@ class Scorer:
             local_files_only=from_disk,
         )
 
-        # Text-only scoring: pull the language decoder + output head out of the
-        # (possibly multimodal) model and drop the unused towers to save memory.
         base = getattr(model, "model", model)
-        for attr in ("vision_tower", "audio_tower", "embed_vision", "embed_audio", "visual"):
-            if getattr(base, attr, None) is not None:
-                setattr(base, attr, None)
+        self._base = base
+        # Multimodal-RoPE models (Qwen2.5/3-VL) need explicit positions during
+        # cached decoding; see _vision_cached.
+        self._uses_mrope = hasattr(base, "compute_3d_position_ids")
+        vision_attrs = (
+            "vision_tower", "visual", "vision_model", "embed_vision", "audio_tower",
+            "embed_audio",
+        )
+        if self.multimodal and not any(getattr(base, a, None) is not None for a in vision_attrs):
+            self.multimodal = False
+
+        # Text-only scoring drops the unused multimodal towers to save memory. Keep
+        # them when the checkpoint is multimodal so images can be scored.
+        if not self.multimodal:
+            for attr in vision_attrs:
+                if getattr(base, attr, None) is not None:
+                    setattr(base, attr, None)
         for attr in ("mtp",):
             if getattr(model, attr, None) is not None:
                 setattr(model, attr, None)
@@ -276,6 +301,7 @@ class Scorer:
         *,
         add_leading_space: bool = True,
         use_kv_cache: bool = True,
+        image: Any = None,
     ) -> list[SequenceScore]:
         """Return sequence log-probabilities (tokens + EOS) for each option.
 
@@ -288,7 +314,18 @@ class Scorer:
         If the model's cache cannot be reused (no ``crop`` support, no cache
         returned, forward rejects ``past_key_values``), this falls back to the exact
         path and logs a warning once.
+
+        ``image`` (a PIL image, raw bytes, or a path) prepends the image to the
+        prompt and scores the options through the same full-vocabulary logits.
+        Requires a multimodal checkpoint; text-only models raise a clear error.
         """
+        if image is not None:
+            # The chat template already ends with the assistant generation prompt,
+            # so the option continues immediately (no synthetic leading space).
+            return self._score_options_vision(
+                prefix_text, options, False, use_kv_cache, image
+            )
+
         if use_kv_cache and self._kv_cache_ok is not False:
             try:
                 result = self._score_options_cached(prefix_text, options, add_leading_space)
@@ -423,6 +460,238 @@ class Scorer:
                     continuation=continuation,
                     tokens=tokens,
                     eos_token=tok.decode([self.eos_token_id]),
+                    eos_logprob=eos_logprob,
+                    total_logprob=total,
+                )
+            )
+        return results
+
+    @staticmethod
+    def _as_image(image: Any):
+        """Coerce a PIL image, raw bytes, or a filesystem path into a PIL image."""
+        from PIL import Image
+
+        if isinstance(image, Image.Image):
+            return image.convert("RGB")
+        if isinstance(image, (bytes, bytearray, memoryview)):
+            return Image.open(io.BytesIO(bytes(image))).convert("RGB")
+        if isinstance(image, (str, os.PathLike)):
+            return Image.open(image).convert("RGB")
+        raise TypeError(f"Unsupported image type {type(image).__name__}")
+
+    def _vision_text(self, prefix_text: str) -> str:
+        """Wrap the prompt in the model's chat template with a single image slot.
+
+        Hybrid "thinking" models (e.g. Qwen3-VL-*-Thinking) accept
+        ``enable_thinking``; passing False keeps them in direct-answer mode, which
+        is what we score. Processors that don't know the kwarg retry without it.
+        """
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image"},
+                    {"type": "text", "text": prefix_text},
+                ],
+            }
+        ]
+        # Only pass `enable_thinking` when the template actually uses it; sending
+        # it to a template that doesn't warns and does nothing.
+        template = getattr(self.processor, "chat_template", None) or getattr(
+            self.tokenizer, "chat_template", None
+        )
+        attempts = (
+            ({"enable_thinking": False}, {})
+            if template and "enable_thinking" in template
+            else ({},)
+        )
+
+        last_error: Exception | None = None
+        for extra in attempts:
+            try:
+                return self.processor.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True, **extra
+                )
+            except TypeError as exc:  # processor doesn't accept enable_thinking
+                last_error = exc
+                continue
+            except Exception as exc:  # noqa: BLE001
+                raise RuntimeError(
+                    f"{type(self.processor).__name__} cannot build a chat template "
+                    f"with an image ({type(exc).__name__}: {exc})."
+                ) from exc
+        raise RuntimeError(
+            f"{type(self.processor).__name__} cannot build a chat template with an "
+            f"image ({last_error})."
+        )
+
+    def _vision_batch(self, text: str, image: Any) -> Any:
+        return self.processor(text=[text], images=[image], return_tensors="pt")
+
+    def _vision_prefix(self, prefix_text: str, image: Any) -> tuple[str, int, Any]:
+        wrapped = self._vision_text(prefix_text)
+        inputs = self._vision_batch(wrapped, image)
+        return wrapped, int(inputs["input_ids"].shape[1]), inputs
+
+    def _score_options_vision(
+        self,
+        prefix_text: str,
+        options: list[str],
+        add_leading_space: bool,
+        use_kv_cache: bool,
+        image: Any,
+    ) -> list[SequenceScore]:
+        if self.processor is None or not self.multimodal:
+            raise RuntimeError(
+                f"{self.model_id!r} is not a multimodal model; image classification "
+                "needs a vision-language checkpoint (e.g. Qwen/Qwen3-VL-4B-Instruct)."
+            )
+        image = self._as_image(image)
+
+        if use_kv_cache and self._kv_cache_ok is not False:
+            try:
+                result = self._vision_cached(prefix_text, options, add_leading_space, image)
+            except Exception as exc:  # noqa: BLE001 - any failure => fall back
+                self._kv_cache_ok = False
+                logger.warning(
+                    "KV cache unavailable for vision with %s (%s: %s); falling back "
+                    "to exact scoring.",
+                    type(self._model).__name__,
+                    type(exc).__name__,
+                    exc,
+                )
+            else:
+                self._kv_cache_ok = True
+                return result
+        return self._vision_exact(prefix_text, options, add_leading_space, image)
+
+    def _vision_exact(
+        self, prefix_text: str, options: list[str], add_leading_space: bool, image: Any
+    ) -> list[SequenceScore]:
+        torch = self.torch
+        model = self._model
+        device = next(model.parameters()).device
+        wrapped, prefix_len, _ = self._vision_prefix(prefix_text, image)
+
+        results: list[SequenceScore] = []
+        for option in options:
+            continuation = (" " if add_leading_space else "") + option
+            inputs = self._vision_batch(wrapped + continuation, image)
+            inputs = {k: (v.to(device) if hasattr(v, "to") else v) for k, v in inputs.items()}
+            full_ids = inputs["input_ids"][0].tolist()
+            cont_ids = full_ids[prefix_len:]
+
+            with torch.inference_mode():
+                logits = model(**inputs).logits[0]
+                logprobs = torch.log_softmax(logits.float(), dim=-1)
+
+            tokens = [
+                TokenScore(
+                    token=self.tokenizer.decode([tid]),
+                    token_id=int(tid),
+                    logprob=logprobs[prefix_len + i - 1, tid].item(),
+                )
+                for i, tid in enumerate(cont_ids)
+            ]
+            eos_logprob = logprobs[len(full_ids) - 1, self.eos_token_id].item()
+            total = sum(t.logprob for t in tokens) + eos_logprob
+            results.append(
+                SequenceScore(
+                    option=option,
+                    continuation=continuation,
+                    tokens=tokens,
+                    eos_token=self.tokenizer.decode([self.eos_token_id]),
+                    eos_logprob=eos_logprob,
+                    total_logprob=total,
+                )
+            )
+        return results
+
+    def _vision_cached(
+        self, prefix_text: str, options: list[str], add_leading_space: bool, image: Any
+    ) -> list[SequenceScore]:
+        """Prefill the image + prompt once, then reuse its KV cache per option."""
+        torch = self.torch
+        model = self._model
+        device = next(model.parameters()).device
+        wrapped, prefix_len, prefix_inputs = self._vision_prefix(prefix_text, image)
+        prefix_inputs = {
+            k: (v.to(device) if hasattr(v, "to") else v) for k, v in prefix_inputs.items()
+        }
+
+        with torch.inference_mode():
+            prefill = model(**prefix_inputs, use_cache=True)
+            prefix_logprobs = torch.log_softmax(
+                prefill.logits[0, -1:, :].float(), dim=-1
+            )[0]
+        cache = prefill.past_key_values
+        if cache is None or not hasattr(cache, "crop"):
+            raise RuntimeError(
+                f"{type(model).__name__} did not return a reusable KV cache"
+            )
+
+        results: list[SequenceScore] = []
+        for option in options:
+            continuation = (" " if add_leading_space else "") + option
+            full_inputs = self._vision_batch(wrapped + continuation, image)
+            full_ids = full_inputs["input_ids"][0].tolist()
+            cont_ids = full_ids[prefix_len:]
+            count = len(cont_ids)
+
+            with torch.inference_mode():
+                if count == 0:
+                    logprob_values = [prefix_logprobs[self.eos_token_id].item()]
+                else:
+                    attention_mask = torch.ones(
+                        (1, prefix_len + count), device=device, dtype=torch.long
+                    )
+                    cache_position = torch.arange(
+                        prefix_len, prefix_len + count, device=device
+                    )
+                    # Multimodal-RoPE models derive positions from the attention
+                    # mask length, which is the full prefix here; pass the new
+                    # tokens' positions explicitly (shifted by the image's rope
+                    # delta), like GenerationMixin does during decoding.
+                    position_ids = cache_position.unsqueeze(0)
+                    if self._uses_mrope:
+                        rope_deltas = getattr(self._base, "rope_deltas", None)
+                        if rope_deltas is not None:
+                            position_ids = position_ids + rope_deltas.to(device)
+                        position_ids = position_ids.unsqueeze(0).expand(3, -1, -1)
+                    out = model(
+                        input_ids=torch.tensor([cont_ids], device=device),
+                        attention_mask=attention_mask,
+                        position_ids=position_ids,
+                        past_key_values=cache,
+                        use_cache=True,
+                        cache_position=cache_position,
+                    )
+                    logprobs = torch.log_softmax(out.logits[0].float(), dim=-1)
+                    logprob_values = [prefix_logprobs[cont_ids[0]].item()]
+                    logprob_values.extend(
+                        logprobs[j, cont_ids[j + 1]].item() for j in range(count - 1)
+                    )
+                    logprob_values.append(logprobs[count - 1, self.eos_token_id].item())
+
+            if count:
+                cache.crop(-count)
+
+            tokens = [
+                TokenScore(
+                    token=self.tokenizer.decode([tid]),
+                    token_id=int(tid),
+                    logprob=logprob_values[i],
+                )
+                for i, tid in enumerate(cont_ids)
+            ]
+            eos_logprob = logprob_values[-1]
+            total = sum(t.logprob for t in tokens) + eos_logprob
+            results.append(
+                SequenceScore(
+                    option=option,
+                    continuation=continuation,
+                    tokens=tokens,
+                    eos_token=self.tokenizer.decode([self.eos_token_id]),
                     eos_logprob=eos_logprob,
                     total_logprob=total,
                 )

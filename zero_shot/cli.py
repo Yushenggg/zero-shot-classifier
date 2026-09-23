@@ -21,6 +21,15 @@ def _load_json(path: str, label: str) -> Any:
         raise SystemExit(f"{label} is not valid JSON: {exc}")
 
 
+def _load_image(path: str) -> bytes:
+    if path == "-":
+        return sys.stdin.buffer.read()
+    image_path = Path(path)
+    if not image_path.exists():
+        raise SystemExit(f"Image file not found: {path}")
+    return image_path.read_bytes()
+
+
 def _format_tokens(score) -> str:
     parts = [f"{t.token!r}({t.logprob:.3f})" for t in score.tokens]
     parts.append(f"<eos>({score.eos_logprob:.3f})")
@@ -68,11 +77,19 @@ def main(argv: list[str] | None = None) -> int:
         prog="zero-shot",
         description=(
             "Zero-shot classifier using the exact next-token distribution (including "
-            "EOS) of a local model. Supports choice, noul (yes/no) and score questions."
+            "EOS) of a local model. Supports choice, noul (yes/no) and score questions, "
+            "optionally grounded in an image (--image)."
         ),
     )
     parser.add_argument("--question", "-q", required=True, help="Question JSON file, or - for stdin.")
     parser.add_argument("--state", "-s", default="-", help="State JSON file, or - for stdin (default).")
+    parser.add_argument(
+        "--image",
+        "-i",
+        default=None,
+        help="Image for multimodal classification (PNG/JPEG/etc.), or - to read raw "
+        "bytes from stdin. Requires a vision-language model in the config.",
+    )
     parser.add_argument(
         "--config",
         default=None,
@@ -147,8 +164,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", action="store_true", help="Emit structured JSON instead of a table.")
     args = parser.parse_args(argv)
 
-    if args.question == "-" and args.state == "-":
-        raise SystemExit("Only one of --question/--state can read from stdin.")
+    stdin_sources = sum(
+        1 for arg in (args.question, args.state, args.image) if arg == "-"
+    )
+    if stdin_sources > 1:
+        raise SystemExit("Only one of --question/--state/--image can read from stdin.")
 
     config = load_config(args.config)
     model_id = args.model_id or config.model
@@ -165,6 +185,7 @@ def main(argv: list[str] | None = None) -> int:
 
     question = _load_json(args.question, "Question")
     state = _load_json(args.state, "State")
+    image = _load_image(args.image) if args.image else None
 
     try:
         results = classify(
@@ -179,6 +200,7 @@ def main(argv: list[str] | None = None) -> int:
             use_kv_cache=use_kv_cache,
             calibrate=calibrate,
             calibration_context=calibration_context,
+            image=image,
         )
     except (ValueError, RuntimeError) as exc:
         print(f"error: {exc}", file=sys.stderr)

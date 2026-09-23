@@ -172,20 +172,25 @@ def classify_one(
     use_kv_cache: bool = False,
     calibrate: bool = False,
     calibration_context: str = "N/A",
+    image: Any = None,
 ) -> Classification:
     prompt, options = _build_question(name, spec, state)
     scorer = get_scorer(model_id, save_to=save_to, device=device, gpu=gpu, quantize=quantize)
     texts = [text for _, text in options]
     sequence_scores: list[SequenceScore] = scorer.score_options(
-        prompt, texts, use_kv_cache=use_kv_cache
+        prompt, texts, use_kv_cache=use_kv_cache, image=image
     )
     by_text = {s.option: s for s in sequence_scores}
 
-    # Contextual calibration: subtract each option's content-free prior.
+    # Contextual calibration: subtract each option's content-free prior. For
+    # image questions the image is content, so the null pass runs text-only
+    # (calibrating against the same image would cancel the image's signal).
     null_by_text: dict[str, float] = {}
     if calibrate:
         null_prompt, _ = _build_question(name, spec, calibration_context)
-        null_scores = scorer.score_options(null_prompt, texts, use_kv_cache=use_kv_cache)
+        null_scores = scorer.score_options(
+            null_prompt, texts, use_kv_cache=use_kv_cache, image=None
+        )
         null_by_text = {s.option: s.total_logprob for s in null_scores}
 
     scores: list[OptionScore] = []
@@ -252,6 +257,7 @@ def classify(
     use_kv_cache: bool = False,
     calibrate: bool = False,
     calibration_context: str = "N/A",
+    image: Any = None,
 ) -> list[Classification]:
     """Evaluate `state` against a map of typed questions.
 
@@ -287,6 +293,7 @@ def classify(
             use_kv_cache=use_kv_cache,
             calibrate=calibrate,
             calibration_context=calibration_context,
+            image=image,
         )
         for name, spec in question.items()
     ]

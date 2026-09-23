@@ -9,12 +9,19 @@
 <body>
 <header>
   <h1>Zero-Shot Classifier</h1>
+  <label class="mode-toggle" id="modeToggleLabel" data-mode="text">
+    <span class="mode-label" data-label="text">Text</span>
+    <input type="checkbox" id="modeToggle" role="switch" aria-label="Toggle image input" />
+    <span class="mode-track"><span class="mode-knob"></span></span>
+    <span class="mode-label" data-label="image">Image</span>
+  </label>
   <label for="type" class="example-label">Load example</label>
   <select id="type" class="example-select">
     <option value="choice">choice</option>
     <option value="noul">noul (yes/no)</option>
     <option value="score">score (scale)</option>
     <option value="mixed">mixed (all three)</option>
+    <option value="image">image (vision)</option>
   </select>
   <span class="status"><span class="dot" id="dot"></span><span id="statusText">checking model…</span></span>
   <button id="themeToggle" class="theme-toggle" type="button">Light</button>
@@ -22,7 +29,17 @@
 
 <main>
   <div class="col">
-    <section class="panel">
+    <section class="panel" id="imagePanel">
+      <h2>Image</h2>
+      <div class="image-row">
+        <input type="file" id="imageInput" accept="image/*" />
+        <button id="imageClear" class="ghost" type="button">Clear</button>
+      </div>
+      <div class="image-note" id="imageNote">Attach an image to classify it with a vision-language model.</div>
+      <img id="imagePreview" class="image-preview" alt="" hidden />
+    </section>
+
+    <section class="panel" id="statePanel">
       <h2>State / Context (JSON)</h2>
       <div id="state"></div>
     </section>

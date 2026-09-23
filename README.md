@@ -132,8 +132,9 @@ is running on CPU or GPU.
 
 ### HTTP API
 
-`POST /api/classify` (also mounted at the TypeSafe-compatible `POST /v1/systemone`)
-accepts a TypeSafe-style body (all three question types can be mixed):
+`POST /v1/classify/text` (also available at the TypeSafe-compatible
+`POST /v1/systemone`) accepts a TypeSafe-style body (all three question types can be
+mixed):
 
 ```json
 {
@@ -155,6 +156,39 @@ Returns `{"model": ..., "answers": { "<id>": <answer> }, "results": [ ... ], "us
 `model` is optional and defaults to `config.toml`; if a different model is given it
 is loaded from (or downloaded into) a sibling directory under `models/`.
 `GET /api/health` reports the configured model and device.
+
+### Image classification
+
+The same questions can be grounded in an image, using the identical logit
+extraction (full-vocabulary `log P(token)` + EOS, corrected softmax) — the image is
+just prepended to the prompt through the model's chat template. This needs a
+vision-language checkpoint; `config.vlm.toml` points at
+`Qwen/Qwen3-VL-4B-Instruct` (~9 GB in bf16). For a reasoning variant, set
+`model = "Qwen/Qwen3-VL-4B-Thinking"`.
+
+CLI (`--image`/`-i` takes a file, or `-` for raw bytes on stdin):
+
+```bash
+.venv/bin/zero-shot --config config.vlm.toml \
+  -q examples/color_question.json -s examples/color_state.json -i photo.jpg
+```
+
+HTTP API: `POST /v1/classify/image` accepts `multipart/form-data` with a `file`
+image stream and JSON `questions`/`state` strings. Text requests use
+`/v1/classify/text`; both go through the exact same scoring path:
+
+```bash
+curl -F file=@photo.jpg \
+     -F 'questions={"color": {"type": "choice", "instructions": "What color is the fruit?", "criteria": {"red": "", "green": "", "yellow": ""}}}' \
+     http://127.0.0.1:8000/v1/classify/image
+```
+
+Serve it with `zero-shot-serve --config config.vlm.toml`. In the web UI, switch the
+**Text / Image** toggle to Image, attach a file, and Classify — the UI posts to
+`/v1/classify/image` (the State editor is hidden, since the image is the context).
+The image + prompt are prefilled once and the KV cache is reused across options, so
+the calibration pass shares the same image prefill. Passing `--image` to a text-only
+model fails with a clear error.
 
 ### Web UI
 
