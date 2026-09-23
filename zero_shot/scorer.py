@@ -227,8 +227,13 @@ class Scorer:
         if model_cls is None:
             model_cls = transformers.AutoModelForCausalLM
 
-        # Processor is only needed for multimodal (image) scoring. It also tells us
-        # whether the checkpoint has a vision tower to keep.
+        # Trust the processor for multimodal detection: if it loads with an
+        # image_processor the checkpoint is multimodal. We don't second-guess by
+        # poking at per-architecture vision tower attributes (vision_tower /
+        # visual / vision_model / embed_vision / vision_encoder / ...) — every
+        # new VLM invents a new name. If the processor says multimodal but the
+        # forward pass doesn't actually accept images, the runtime error in
+        # `score_image` makes that clear.
         self.processor = None
         try:
             self.processor = AutoProcessor.from_pretrained(source, local_files_only=from_disk)
@@ -254,19 +259,7 @@ class Scorer:
         # Multimodal-RoPE models (Qwen2.5/3-VL) need explicit positions during
         # cached decoding; see _vision_cached.
         self._uses_mrope = hasattr(base, "compute_3d_position_ids")
-        vision_attrs = (
-            "vision_tower", "visual", "vision_model", "embed_vision", "audio_tower",
-            "embed_audio",
-        )
-        if self.multimodal and not any(getattr(base, a, None) is not None for a in vision_attrs):
-            self.multimodal = False
 
-        # Text-only scoring drops the unused multimodal towers to save memory. Keep
-        # them when the checkpoint is multimodal so images can be scored.
-        if not self.multimodal:
-            for attr in vision_attrs:
-                if getattr(base, attr, None) is not None:
-                    setattr(base, attr, None)
         for attr in ("mtp",):
             if getattr(model, attr, None) is not None:
                 setattr(model, attr, None)

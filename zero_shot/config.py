@@ -5,8 +5,8 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-DEFAULT_MODEL_ID = "Qwen/Qwen3-4B-Instruct-2507"
-DEFAULT_SAVE_TO: str | None = "models/qwen3-4b-instruct-2507"
+DEFAULT_MODEL_ID = "Qwen/Qwen3-VL-4B-Instruct"
+DEFAULT_SAVE_TO: str | None = "models/qwen3-vl-4b-instruct"
 DEFAULT_DEVICE = "auto"
 DEFAULT_GPU = "rtx_5060_ti"
 DEFAULT_QUANTIZE = "auto"

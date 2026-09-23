@@ -1,0 +1,31 @@
+# CPU + vision config for the zero-shot classifier.
+#
+# Serve with:
+#   zero-shot-serve --cpu-low    # auto-discovers this file
+#   zero-shot-serve --config config.cpu.toml
+#
+# SmolVLM-500M-Instruct is a small Idefics3 vision-language model (~500M params,
+# ~1 GB bf16). With int8 dynamic quantization it fits in ~500 MB RAM and runs on
+# a CPU-only laptop. Architecture is native to transformers (no trust_remote_code
+# needed). Quality is below Qwen3-VL-4B (see the criteria-order bias table in the
+# README); the trade-off is universal CPU availability.
+
+model = "HuggingFaceTB/SmolVLM-500M-Instruct"
+save_to = "models/smolvlm-500m-instruct"
+
+# Force CPU: this config is for machines without a usable GPU.
+device = "cpu"
+
+# Kept for compatibility with `gpu = "..."` validation; unused on CPU.
+gpu = "rtx_5060_ti"
+
+# int8 dynamic quantization: ~2x faster on AVX2+VNNI, ~4x less RAM than bf16,
+# at the cost of perturbing logprobs (near-tie predictions can shift).
+quantize = "int8"
+
+kv_cache = true
+
+temperature = 1.0
+
+calibrate = true
+calibration_context = "N/A"

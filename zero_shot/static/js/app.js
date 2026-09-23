@@ -48,7 +48,7 @@ function setVisionAvailable(available) {
   modeToggle.disabled = disabled;
   modeToggleLabel.classList.toggle("disabled", disabled);
   modeToggleLabel.title = disabled
-    ? "The configured model is text-only. Serve a vision model (e.g. config.vlm.toml) for image input."
+    ? "The configured model is text-only. Serve a vision model (e.g. config.toml or config.cpu.toml) for image input."
     : "";
   const imageOption = exampleSelect.querySelector('option[value="image"]');
   if (imageOption) imageOption.disabled = disabled;

@@ -155,6 +155,38 @@
   </section>
 
   <section>
+    <h2>Trying it on a vision model</h2>
+    <p>
+      After living with this for a while I had a thought: a vision-language model
+      does the same thing, it just accepts an image as part of the prompt. So why
+      can't I use one here? The scoring path doesn't care where the context comes
+      from &mdash; it just wants the logits over the option tokens. The image is
+      prepended to the prompt through the model's chat template and everything
+      downstream works unchanged.
+    </p>
+    <p>
+      I went ahead and tried it with <span class="mono">Qwen3-VL-4B-Instruct</span>,
+      and &mdash; surprisingly &mdash; it worked as expected. The KV cache reuse
+      carries over: the image + shared prompt is prefilled once, then each option
+      continuation is scored against it. Calibration works the same way too; the
+      calibration pass shares the same image prefill, so the second pass is cheap.
+      The <span class="mono">/v1/classify/image</span> endpoint just takes a
+      multipart upload alongside the usual JSON questions and runs the exact same
+      scoring path as the text endpoint.
+    </p>
+    <p>
+      For machines without a usable GPU, the same idea works with
+      <span class="mono">SmolVLM-500M-Instruct</span> at
+      <span class="mono">int8</span> (~500M params, ~500&nbsp;MB RAM). Quality on
+      edge cases is lower than Qwen3-VL-4B &mdash; the criteria-order bias
+      shows up more easily, and the winner can flip between orderings &mdash;
+      but for short, direct classification prompts it fits in essentially any
+      laptop. It uses the standard Idefics3 architecture, so there's no custom
+      code or trust_remote_code to think about.
+    </p>
+  </section>
+
+  <section>
     <h2>Making it fast: the KV cache</h2>
     <p>
       Scoring <em>N</em> options normally means <em>N</em> forward passes, each

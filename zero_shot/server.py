@@ -208,9 +208,9 @@ async def classify_image_endpoint(
 
 
 def _cpu_low_config_path() -> Path:
-    """Locate the bundled config.smollm.toml (project root or cwd)."""
-    candidate = Path(__file__).resolve().parent.parent / "config.smollm.toml"
-    return candidate if candidate.exists() else Path.cwd() / "config.smollm.toml"
+    """Locate the bundled config.cpu.toml (project root or cwd)."""
+    candidate = Path(__file__).resolve().parent.parent / "config.cpu.toml"
+    return candidate if candidate.exists() else Path.cwd() / "config.cpu.toml"
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -221,12 +221,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--config",
         default=None,
-        help="Config file to serve, e.g. config.vlm.toml for image classification.",
+        help="Config file to serve, e.g. config.cpu.toml for the SmolVLM-500M CPU path.",
     )
     parser.add_argument(
         "--cpu-low",
         action="store_true",
-        help="Serve the small CPU model (config.smollm.toml) instead of the configured one.",
+        help="Serve the CPU model (config.cpu.toml, SmolVLM-500M) instead of the configured one.",
     )
     parser.add_argument(
         "--port",
