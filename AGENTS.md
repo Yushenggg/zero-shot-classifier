@@ -21,6 +21,7 @@ Vision-language is the default; text and image requests share one scoring path.
 - `.venv/bin/zero-shot-serve --cpu-low` — serve the CPU preset
 - `.venv/bin/zero-shot-serve --config <path>` — serve an arbitrary config
 - `.venv/bin/zero-shot -q <questions.json> -s <state.json> [-i <image>]` — classify from the CLI
+- `.venv/bin/python -m pytest` — run the regression suite (`tests/core`, `tests/interfaces`); no model is loaded
 - `uvx ruff@0.16.8 check` — lint the tree (config in `pyproject.toml`; CI pins the same version and runs on PRs and pushes to `main`)
 
 ## Conventions
@@ -30,5 +31,12 @@ Vision-language is the default; text and image requests share one scoring path.
 - Vision-language is the default mode; the UI disables Image mode for text-only checkpoints.
 
 ## Tests
-None. Smoke-test: start the server, poll `/api/health` for `model_loaded: true`
-(60–120 s), and dump the last 30 lines of the uvicorn log on failure.
+`.venv/bin/python -m pytest` runs the regression suite in `tests/` (mirrors the
+package: `tests/core`, `tests/interfaces`). A `FakeScorer` replaces the real
+model, so the suite is deterministic, offline, and fast — it covers prompt
+building, calibration/softmax, config + pydantic validation, the scorer cache,
+image utils, the CLI, and the HTTP API via `TestClient`.
+
+For a real end-to-end check, start the server and poll `/api/health` for
+`model_loaded: true` (60–120 s), dumping the last 30 lines of the uvicorn log on
+failure.

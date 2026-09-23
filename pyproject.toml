@@ -25,7 +25,7 @@ zero-shot = "zero_shot.interfaces.cli.main:main"
 zero-shot-serve = "zero_shot.interfaces.server.main:main"
 
 [dependency-groups]
-dev = ["ruff>=0.16"]
+dev = ["ruff>=0.16", "pytest>=8"]
 
 [build-system]
 requires = ["hatchling"]
@@ -48,6 +48,10 @@ select = ["E", "F", "W", "I", "B", "UP", "BLE"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["zero_shot"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
 
 # `uv sync` installs the CUDA build of PyTorch by default (from PyPI).
 # On a machine without a GPU, switch to the CPU-only build instead:

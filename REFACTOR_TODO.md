@@ -14,6 +14,21 @@ Decisions locked in with the owner:
 
 ## Tasks
 
+- [x] **Task 4 — regression tests**
+  - `tests/core/` (models, config, classifier, scorer, image_utils) and
+    `tests/interfaces/` (schemas, CLI, server), mirroring the package layout.
+  - `FakeScorer` fixture keeps the suite deterministic and offline; pytest added
+    to the dev group and configured in `pyproject.toml`.
+  - `AGENTS.md` tests section updated.
+  - Review agent findings: no blockers. Fixes applied: (major) autouse fixture
+    clears ambient `ZERO_SHOT_*` env vars so config tests are isolated; (major)
+    added coverage for the 413 request/upload limits; (minor) image calibration
+    routing contract (`chat_template`/`add_leading_space`), `resolve_precision`
+    `"none"`/`None` aliases, GPU-name mismatch, `_render` list/null, unscored and
+    all-unscored options, and `temperature <= 0`; seeded the noise image test and
+    removed a duplicated PNG helper.
+  - Verified: `pytest` 87 passed in ~1 s, offline and with `ZERO_SHOT_*` set.
+
 - [x] **Task 1 — core/interface split**
   - `zero_shot/core/{classifier,scorer,config,image_utils}.py`
   - `zero_shot/interfaces/cli/` (console script `zero-shot`)
