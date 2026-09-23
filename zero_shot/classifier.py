@@ -189,14 +189,15 @@ def classify_one(
     by_text = {s.option: s for s in sequence_scores}
 
     # Contextual calibration: subtract each option's content-free prior. For
-    # image questions the image is content, so the null pass runs text-only
-    # (calibrating against the same image would cancel the image's signal).
+    # image questions the null pass stays text-only -- the image *is* the signal,
+    # so calibrating against it would cancel it -- but it is rendered through the
+    # same chat template as the vision main pass so only the context differs.
     null_by_text: dict[str, float] = {}
     if calibrate:
         null_prompt, _ = _build_question(name, spec, calibration_context)
         null_scores = scorer.score_options(
             null_prompt, texts, use_kv_cache=use_kv_cache, image=None,
-            add_leading_space=add_leading_space,
+            add_leading_space=add_leading_space, chat_template=image is not None,
         )
         null_by_text = {s.option: s.total_logprob for s in null_scores}
 

@@ -213,7 +213,7 @@ class Scorer:
         # visual / vision_model / embed_vision / vision_encoder / ...) — every
         # new VLM invents a new name. If the processor says multimodal but the
         # forward pass doesn't actually accept images, the runtime error in
-        # `score_image` makes that clear.
+        # `_score_options_vision` makes that clear.
         self.processor = None
         try:
             self.processor = AutoProcessor.from_pretrained(source, local_files_only=from_disk)
@@ -287,6 +287,7 @@ class Scorer:
         add_leading_space: bool = True,
         use_kv_cache: bool = True,
         image: Any = None,
+        chat_template: bool = False,
     ) -> list[SequenceScore]:
         """Return sequence log-probabilities (tokens + EOS) for each option.
 
@@ -303,6 +304,10 @@ class Scorer:
         ``image`` (a PIL image, raw bytes, or a path) prepends the image to the
         prompt and scores the options through the same full-vocabulary logits.
         Requires a multimodal checkpoint; text-only models raise a clear error.
+
+        ``chat_template`` renders a text-only ``prefix_text`` through the model's
+        chat template before scoring. Used for the image calibration pass so its
+        content-free prior is measured in the same format as the vision main pass.
         """
         if image is not None:
             # Callers should pass add_leading_space=False for vision: the chat
@@ -314,6 +319,9 @@ class Scorer:
                 return self._score_options_vision(
                     prefix_text, options, add_leading_space, use_kv_cache, image
                 )
+
+        if chat_template:
+            prefix_text = self._text_chat(prefix_text)
 
         if use_kv_cache and self._kv_cache_ok is not False:
             try:
@@ -473,22 +481,13 @@ class Scorer:
                 return decode_image(fh.read())
         raise TypeError(f"Unsupported image type {type(image).__name__}")
 
-    def _vision_text(self, prefix_text: str) -> str:
-        """Wrap the prompt in the model's chat template with a single image slot.
+    def _apply_chat(self, messages: list[dict[str, Any]]) -> str:
+        """Render `messages` through the chat template, assistant turn open.
 
         Hybrid "thinking" models (e.g. Qwen3-VL-*-Thinking) accept
         ``enable_thinking``; passing False keeps them in direct-answer mode, which
         is what we score. Processors that don't know the kwarg retry without it.
         """
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image"},
-                    {"type": "text", "text": prefix_text},
-                ],
-            }
-        ]
         # Only pass `enable_thinking` when the template actually uses it; sending
         # it to a template that doesn't warns and does nothing.
         template = getattr(self.processor, "chat_template", None) or getattr(
@@ -511,11 +510,37 @@ class Scorer:
             except Exception as exc:  # noqa: BLE001
                 raise RuntimeError(
                     f"{type(self.processor).__name__} cannot build a chat template "
-                    f"with an image ({type(exc).__name__}: {exc})."
+                    f"({type(exc).__name__}: {exc})."
                 ) from exc
         raise RuntimeError(
-            f"{type(self.processor).__name__} cannot build a chat template with an "
-            f"image ({last_error})."
+            f"{type(self.processor).__name__} cannot build a chat template ({last_error})."
+        )
+
+    def _vision_text(self, prefix_text: str) -> str:
+        """Chat-template the prompt with a single image slot."""
+        return self._apply_chat(
+            [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image"},
+                        {"type": "text", "text": prefix_text},
+                    ],
+                }
+            ]
+        )
+
+    def _text_chat(self, prefix_text: str) -> str:
+        """Chat-template a text-only prompt (the image calibration pass).
+
+        Keeps the content-free prior in the same format as the vision main pass
+        while leaving the image out, so the image's own option priors are not
+        subtracted away (the image is the signal, not noise to calibrate off).
+        """
+        if self.processor is None:
+            return prefix_text
+        return self._apply_chat(
+            [{"role": "user", "content": [{"type": "text", "text": prefix_text}]}]
         )
 
     def _vision_batch(self, text: str, image: Any) -> Any:
