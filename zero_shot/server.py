@@ -18,7 +18,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .classifier import classify
 from .config import load_config
-from .image_utils import downscale_to_byte_limit
+from .image_utils import decode_image, downscale_to_byte_limit
 from .scorer import get_scorer, loaded_scorer
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -33,6 +33,9 @@ _RESOLVED_DEVICE: str | None = None
 # Override with ZERO_SHOT_MAX_IMAGE_MB / ZERO_SHOT_MAX_UPLOAD_MB.
 MAX_IMAGE_BYTES = int(float(os.environ.get("ZERO_SHOT_MAX_IMAGE_MB", "16")) * 1024 * 1024)
 MAX_UPLOAD_BYTES = int(float(os.environ.get("ZERO_SHOT_MAX_UPLOAD_MB", "64")) * 1024 * 1024)
+# Whole-request ceiling: the image plus the JSON `questions`/`state` fields and
+# multipart overhead. Rejected before the body is read.
+MAX_REQUEST_BYTES = MAX_UPLOAD_BYTES + 1024 * 1024
 
 
 def _too_large_response() -> JSONResponse:
@@ -78,6 +81,27 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Zero-Shot Classifier", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.middleware("http")
+async def limit_request_body(request, call_next):
+    """Reject oversized bodies from Content-Length before the parser reads them."""
+    content_length = request.headers.get("content-length")
+    if content_length is not None:
+        try:
+            too_large = int(content_length) > MAX_REQUEST_BYTES
+        except ValueError:
+            too_large = False
+        if too_large:
+            return JSONResponse(
+                status_code=413,
+                content={
+                    "error": f"Request body exceeds the "
+                    f"{MAX_REQUEST_BYTES // (1024 * 1024)} MB limit "
+                    "(set ZERO_SHOT_MAX_UPLOAD_MB to raise it)"
+                },
+            )
+    return await call_next(request)
 
 
 class ClassifyRequest(BaseModel):
@@ -235,6 +259,12 @@ async def classify_image_endpoint(
             )
         except ValueError as exc:
             return JSONResponse(status_code=400, content={"error": str(exc)})
+    # Decode at the edge so corrupt uploads fail as 400 here, not 500 deeper in
+    # the scorer. The decoded image is passed straight through.
+    try:
+        image = await run_in_threadpool(decode_image, image)
+    except ValueError as exc:
+        return JSONResponse(status_code=400, content={"error": str(exc)})
 
     return await run_in_threadpool(
         _run_classify,

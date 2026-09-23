@@ -177,8 +177,14 @@ def classify_one(
     prompt, options = _build_question(name, spec, state)
     scorer = get_scorer(model_id, save_to=save_to, device=device, gpu=gpu, quantize=quantize)
     texts = [text for _, text in options]
+    # Vision prompts end at the assistant generation prompt, so the option
+    # follows immediately (no synthetic leading space); text prompts end with
+    # "... is:" and need the space. Use the same form for the calibration pass
+    # so its priors are subtracted from identically-tokenized options.
+    add_leading_space = image is None
     sequence_scores: list[SequenceScore] = scorer.score_options(
-        prompt, texts, use_kv_cache=use_kv_cache, image=image
+        prompt, texts, use_kv_cache=use_kv_cache, image=image,
+        add_leading_space=add_leading_space,
     )
     by_text = {s.option: s for s in sequence_scores}
 
@@ -189,7 +195,8 @@ def classify_one(
     if calibrate:
         null_prompt, _ = _build_question(name, spec, calibration_context)
         null_scores = scorer.score_options(
-            null_prompt, texts, use_kv_cache=use_kv_cache, image=None
+            null_prompt, texts, use_kv_cache=use_kv_cache, image=None,
+            add_leading_space=add_leading_space,
         )
         null_by_text = {s.option: s.total_logprob for s in null_scores}
 

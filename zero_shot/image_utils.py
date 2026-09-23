@@ -10,6 +10,26 @@ _DEFAULT_MIN_EDGE = 256
 _SCALE_STEP = 0.75
 
 
+def decode_image(data: bytes):
+    """Decode ``data`` into an RGB PIL image, raising ``ValueError`` on failure.
+
+    EXIF is deliberately ignored: the pixels are used as stored, with no
+    orientation transpose. (It would otherwise only be applied on some code
+    paths and not others.)
+    """
+    from PIL import Image
+
+    try:
+        with Image.open(io.BytesIO(data)) as src:
+            src.load()
+            im = src.convert("RGB")
+    except Image.DecompressionBombError as exc:
+        raise ValueError(f"Image is too large to decode safely ({exc}).") from exc
+    except (Image.UnidentifiedImageError, OSError) as exc:
+        raise ValueError(f"Could not decode image: {exc}") from exc
+    return im
+
+
 def downscale_to_byte_limit(
     data: bytes,
     max_bytes: int,
@@ -20,26 +40,16 @@ def downscale_to_byte_limit(
     """Return JPEG bytes at or below ``max_bytes``.
 
     ``data`` is returned unchanged when it already fits. Otherwise it is decoded,
-    EXIF-rotated, converted to RGB, and repeatedly scaled down by 25% and
-    re-encoded as JPEG until it fits. Raises ``ValueError`` if the image cannot
-    be decoded or cannot be brought under the limit.
+    converted to RGB, and repeatedly scaled down by 25% and re-encoded as JPEG
+    until it fits. Raises ``ValueError`` if the image cannot be decoded or cannot
+    be brought under the limit.
     """
     if len(data) <= max_bytes:
         return data
 
-    from PIL import Image, ImageOps
+    from PIL import Image
 
-    try:
-        with Image.open(io.BytesIO(data)) as src:
-            src.load()
-            im = ImageOps.exif_transpose(src)
-    except Image.DecompressionBombError as exc:
-        raise ValueError(f"Image is too large to decode safely ({exc}).") from exc
-    except Image.UnidentifiedImageError as exc:
-        raise ValueError(f"Could not decode image: {exc}") from exc
-
-    if im.mode != "RGB":
-        im = im.convert("RGB")
+    im = decode_image(data)
 
     scale = 1.0
     encoded = data

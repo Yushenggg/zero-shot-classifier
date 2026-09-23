@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import io
 import logging
 import os
 import threading
@@ -302,11 +301,14 @@ class Scorer:
         Requires a multimodal checkpoint; text-only models raise a clear error.
         """
         if image is not None:
-            # The chat template already ends with the assistant generation prompt,
-            # so the option continues immediately (no synthetic leading space).
+            # Callers should pass add_leading_space=False for vision: the chat
+            # template already ends with the assistant generation prompt, so the
+            # option continues immediately. It is honored here (not forced) so a
+            # vision main pass and its text-only calibration pass tokenize the
+            # options identically.
             with self._vision_lock:
                 return self._score_options_vision(
-                    prefix_text, options, False, use_kv_cache, image
+                    prefix_text, options, add_leading_space, use_kv_cache, image
                 )
 
         if use_kv_cache and self._kv_cache_ok is not False:
@@ -454,27 +456,17 @@ class Scorer:
         """Coerce a PIL image, raw bytes, or a filesystem path into a PIL image."""
         from PIL import Image
 
-        def _decode(fp):
-            try:
-                with Image.open(fp) as im:
-                    im.load()
-                    return im.convert("RGB")
-            except Image.DecompressionBombError as exc:
-                raise ValueError(
-                    f"Image is too large to decode safely ({exc}); refusing to "
-                    "expand it in memory."
-                ) from exc
-            except Image.UnidentifiedImageError as exc:
-                raise ValueError(f"Could not decode image: {exc}") from exc
+        from .image_utils import decode_image
 
         if isinstance(image, Image.Image):
             return image.convert("RGB")
         if isinstance(image, (bytes, bytearray, memoryview)):
-            return _decode(io.BytesIO(bytes(image)))
+            return decode_image(bytes(image))
         if isinstance(image, (str, os.PathLike)):
             if not os.path.exists(image):
                 raise ValueError(f"Image file not found: {image}")
-            return _decode(image)
+            with open(image, "rb") as fh:
+                return decode_image(fh.read())
         raise TypeError(f"Unsupported image type {type(image).__name__}")
 
     def _vision_text(self, prefix_text: str) -> str:
@@ -722,6 +714,7 @@ class Scorer:
 
 _SCORERS: dict[tuple[str, str | None, str, str, bool], Scorer] = {}
 _LOCK = threading.Lock()
+_REGISTRY_LOCK = threading.Lock()
 
 
 def get_scorer(
@@ -735,18 +728,24 @@ def get_scorer(
     resolved = resolve_device(device, gpu)
     dtype_name, quantized = resolve_precision(resolved, quantize)
     key = (model_id, str(save_to) if save_to else None, resolved, dtype_name, quantized)
+    # `_LOCK` serializes (slow) construction so a model loads once.
+    # `_REGISTRY_LOCK` guards only the dict structure, so is_loaded/loaded_scorer
+    # stay responsive (and race-free) while a model is loading.
     with _LOCK:
-        if key not in _SCORERS:
-            _SCORERS[key] = Scorer(
-                model_id, save_to=save_to, device=resolved, quantize=quantize
-            )
-        return _SCORERS[key]
+        with _REGISTRY_LOCK:
+            scorer = _SCORERS.get(key)
+        if scorer is None:
+            scorer = Scorer(model_id, save_to=save_to, device=resolved, quantize=quantize)
+            with _REGISTRY_LOCK:
+                _SCORERS[key] = scorer
+        return scorer
 
 
 def is_loaded(model_id: str | None = None) -> bool:
-    if model_id is None:
-        return bool(_SCORERS)
-    return any(key[0] == model_id for key in _SCORERS)
+    with _REGISTRY_LOCK:
+        if model_id is None:
+            return bool(_SCORERS)
+        return any(key[0] == model_id for key in _SCORERS)
 
 
 def loaded_scorer(model_id: str | None = None) -> Scorer | None:
@@ -754,6 +753,7 @@ def loaded_scorer(model_id: str | None = None) -> Scorer | None:
 
     Lets callers read model capabilities (e.g. `multimodal`) without loading it.
     """
-    if model_id is None:
-        return next(iter(_SCORERS.values()), None)
-    return next((s for key, s in _SCORERS.items() if key[0] == model_id), None)
+    with _REGISTRY_LOCK:
+        if model_id is None:
+            return next(iter(_SCORERS.values()), None)
+        return next((s for key, s in _SCORERS.items() if key[0] == model_id), None)
