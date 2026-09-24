@@ -118,3 +118,29 @@ def test_default_config_path_honors_env_override(tmp_path, monkeypatch):
     monkeypatch.setenv("ZERO_SHOT_CONFIG", str(path))
     # No explicit path: load_config must resolve $ZERO_SHOT_CONFIG.
     assert load_config().model == "env-path/model"
+
+
+def test_load_config_ignores_directory_at_path(tmp_path):
+    """A directory at the config path (Docker compose bind-mount of a
+    missing host file) must be skipped, not read with ``read_text()``.
+
+    Regression: a host-side ``config.toml`` that doesn't exist makes Docker
+    create a directory at the mount point. ``Path.exists()`` returns True for
+    directories, so the old code crashed with ``IsADirectoryError`` before
+    the server could even start.
+    """
+    config_path = tmp_path / "config.toml"
+    config_path.mkdir()  # directory, not file
+    config = load_config(config_path)
+    # Falls back to defaults rather than crashing; the directory's parent is
+    # the project root, so relative save_to paths still resolve from there.
+    assert isinstance(config, Config)
+    assert config.model  # populated from defaults
+    assert config.device == "auto"
+    assert config.base_dir == tmp_path
+
+
+def test_load_config_explicit_missing_file_uses_defaults(tmp_path):
+    """The missing-file branch must still work after switching to is_file()."""
+    config = load_config(tmp_path / "does-not-exist.toml")
+    assert config.device == "auto"

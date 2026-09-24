@@ -158,6 +158,15 @@ def load_config(path: str | Path | None = None) -> Config:
     if config_path.is_file():
         data = tomllib.loads(config_path.read_text())
         base_dir = config_path.resolve().parent
+    elif config_path.is_dir():
+        # A directory at the config path usually means a Docker compose
+        # bind-mount pointed at a host file that doesn't exist: Docker
+        # creates the directory in place of the file, which would make
+        # ``exists()`` true and crash ``read_text()`` with IsADirectoryError.
+        # Treat it as missing and fall back to defaults; the directory's
+        # parent is the project root, so relative save_to paths still resolve.
+        data = {}
+        base_dir = config_path.resolve().parent
     else:
         data = {}
         base_dir = Path.cwd()

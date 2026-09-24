@@ -492,6 +492,14 @@ class Scorer:
 
         scale = (cap / (w * h)) ** 0.5
         new_w, new_h = max(1, int(w * scale)), max(1, int(h * scale))
+        # Floor-rounding both dims can push the product above the cap on very
+        # elongated images (e.g. 10000x1 with cap=4 -> 200x1 = 200 px). Shrink
+        # the longer side so the product actually fits.
+        if new_w * new_h > cap:
+            if new_w >= new_h:
+                new_w = max(1, cap // new_h)
+            else:
+                new_h = max(1, cap // new_w)
         return image.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
     def _apply_chat(self, messages: list[dict[str, Any]]) -> str:
@@ -598,6 +606,12 @@ class Scorer:
             # no string match needed.
             if isinstance(exc, torch.cuda.OutOfMemoryError):
                 return True
+            # Plain Python MemoryError can surface from ``torch.empty`` /
+            # tensor allocations on both CUDA and CPU when the allocator
+            # can't grow. It's the same condition as the CUDA class --
+            # treat it the same so the user sees the cap hint.
+            if isinstance(exc, MemoryError):
+                return True
             # CPU: PyTorch's DefaultCPUAllocator raises a plain RuntimeError
             # with the canonical prefix "DefaultCPUAllocator: can't allocate
             # memory" (c10/core/Allocator.cpp, every release since ~1.6). No
@@ -631,22 +645,41 @@ class Scorer:
                         # whose multimodal positions we mishandle (e.g. an M-RoPE
                         # variant without `compute_3d_position_ids`) shows up here as
                         # a large gap instead of silently wrong logprobs.
-                        exact = self._vision_exact(
-                            prefix_text, options, add_leading_space, image
-                        )
-                        delta = self._vision_cache_delta(result, exact)
-                        if delta > _VISION_CACHE_TOLERANCE_NATS:
-                            self._vision_kv_cache_ok = False
-                            logger.warning(
-                                "Vision KV cache disagreed with exact scoring for %s "
-                                "(max Δ%.3f nats > %.1f); using the exact path. This "
-                                "usually means the model's multimodal position handling "
-                                "is not supported.",
-                                type(self._model).__name__,
-                                delta,
-                                _VISION_CACHE_TOLERANCE_NATS,
+                        try:
+                            exact = self._vision_exact(
+                                prefix_text, options, add_leading_space, image
                             )
-                            return exact
+                        except Exception as exc:
+                            if not _is_oom(exc):
+                                raise
+                            # The cached path already produced a good result
+                            # in hand; the exact (memory-hungry) pass is what
+                            # blew up. Don't discard the cached answer just
+                            # because we couldn't validate it -- the cap
+                            # hint will still surface if the cache itself
+                            # OOMs on a later call.
+                            logger.warning(
+                                "Vision KV cache validation OOM'd for %s "
+                                "(%s: %s); trusting cached result without "
+                                "comparison.",
+                                type(self._model).__name__,
+                                type(exc).__name__,
+                                exc,
+                            )
+                        else:
+                            delta = self._vision_cache_delta(result, exact)
+                            if delta > _VISION_CACHE_TOLERANCE_NATS:
+                                self._vision_kv_cache_ok = False
+                                logger.warning(
+                                    "Vision KV cache disagreed with exact scoring for %s "
+                                    "(max Δ%.3f nats > %.1f); using the exact path. This "
+                                    "usually means the model's multimodal position handling "
+                                    "is not supported.",
+                                    type(self._model).__name__,
+                                    delta,
+                                    _VISION_CACHE_TOLERANCE_NATS,
+                                )
+                                return exact
                     self._vision_kv_cache_ok = True
                     return result
             return self._vision_exact(prefix_text, options, add_leading_space, image)
