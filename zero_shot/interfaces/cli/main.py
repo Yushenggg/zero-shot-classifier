@@ -4,10 +4,13 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ...core.classifier import Classification, classify
 from ...core.config import load_config
+
+if TYPE_CHECKING:
+    from ...core.models import SequenceScore
 
 
 def _load_json(path: str, label: str) -> Any:
@@ -30,7 +33,7 @@ def _load_image(path: str) -> bytes:
     return image_path.read_bytes()
 
 
-def _format_tokens(score) -> str:
+def _format_tokens(score: SequenceScore) -> str:
     parts = [f"{t.token!r}({t.logprob:.3f})" for t in score.tokens]
     parts.append(f"<eos>({score.eos_logprob:.3f})")
     return " ".join(parts)
@@ -126,6 +129,21 @@ def main(argv: list[str] | None = None) -> int:
         help="Compute precision: 'auto' (bf16 on GPU, fp32 on CPU), 'bf16', "
         "'fp32', or 'int8' dynamic quantization. Overrides the config file.",
     )
+
+    def _positive_int(value: str) -> int:
+        n = int(value)
+        if n <= 0:
+            raise argparse.ArgumentTypeError("must be > 0")
+        return n
+
+    parser.add_argument(
+        "--max-image-pixels",
+        type=_positive_int,
+        default=None,
+        help="Cap total image pixels before scoring (overrides config file). "
+        "Helps when a vision model OOMs on small GPUs / CPU. Must be > 0; "
+        "omit the flag to use the config value (or no cap if unset).",
+    )
     parser.add_argument(
         "--temperature",
         type=float,
@@ -185,6 +203,11 @@ def main(argv: list[str] | None = None) -> int:
         device = args.device or config.device
         gpu = args.gpu or config.gpu
         quantize = args.quantize or config.quantize
+        max_image_pixels = (
+            args.max_image_pixels
+            if args.max_image_pixels is not None
+            else config.max_image_pixels
+        )
         use_kv_cache = config.kv_cache if args.kv_cache is None else args.kv_cache
         temperature = args.temperature if args.temperature is not None else config.temperature
         calibrate = config.calibrate if args.calibrate is None else args.calibrate
@@ -206,6 +229,7 @@ def main(argv: list[str] | None = None) -> int:
             device=device,
             gpu=gpu,
             quantize=quantize,
+            max_image_pixels=max_image_pixels,
             temperature=temperature,
             use_kv_cache=use_kv_cache,
             calibrate=calibrate,

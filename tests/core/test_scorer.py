@@ -95,10 +95,18 @@ def test_resolve_model_dir_uses_existing_weights(tmp_path):
 class _DummyScorer:
     instances = 0
 
-    def __init__(self, model_id, save_to=None, device="cpu", quantize="auto"):
+    def __init__(
+        self,
+        model_id,
+        save_to=None,
+        device="cpu",
+        quantize="auto",
+        max_image_pixels=None,
+    ):
         type(self).instances += 1
         self.model_id = model_id
         self.device = device
+        self.max_image_pixels = max_image_pixels
 
 
 def test_get_scorer_caches_per_key(monkeypatch, clean_scorer_registry):
@@ -135,3 +143,341 @@ def test_get_scorer_distinguishes_models(monkeypatch, clean_scorer_registry):
     get_scorer("a/model", device="cpu")
     get_scorer("b/model", device="cpu")
     assert _DummyScorer.instances == 2
+
+
+def test_get_scorer_distinguishes_image_pixel_cap(monkeypatch, clean_scorer_registry):
+    import zero_shot.core.scorer as scorer_module
+
+    _DummyScorer.instances = 0
+    monkeypatch.setattr(scorer_module, "Scorer", _DummyScorer)
+    monkeypatch.setattr(scorer_module, "resolve_device", lambda device, gpu: "cpu")
+    monkeypatch.setattr(
+        scorer_module, "resolve_precision", lambda device, quantize: ("float32", False)
+    )
+
+    get_scorer("acme/model", device="cpu")
+    get_scorer("acme/model", device="cpu", max_image_pixels=401408)
+    assert _DummyScorer.instances == 2
+
+
+def _make_vision_oom_stub(monkeypatch, cap, *, cuda_available=True):
+    """Bind ``Scorer._score_options_vision`` to a stub with OOM-raising helpers.
+
+    Building a real Scorer would load torch + transformers + the actual model —
+    we just need the OOM-guard code path to run. ``_score_options_vision`` is an
+    unbound function on the real class; binding it to the stub gives us the real
+    control flow against stubbed lower-level methods.
+
+    ``cuda_available`` controls which device the OOM message names (``GPU memory``
+    vs plain ``memory``); tests can flip it to exercise the CPU message path.
+    """
+    import torch
+
+    from zero_shot.core.scorer import Scorer
+
+    class _StubProcessor:
+        image_processor = object()
+
+    class _StubModel:
+        pass
+
+    _StubModel.__name__ = "StubVisionModel"
+
+    class _StubScorer:
+        multimodal = True
+        max_image_pixels = cap
+        _vision_kv_cache_ok = None
+        device = "cuda" if cuda_available else "cpu"
+        processor = _StubProcessor()
+        _model = _StubModel()
+        model_id = "acme/vision"
+
+        def __init__(self):
+            self.torch = torch  # set on instance, not class (name resolution)
+
+        def _as_image(self, _image):
+            from PIL import Image
+
+            return Image.new("RGB", (8, 8), "red")
+
+        def _cap_image(self, image):
+            return image  # no-op so the cap path is skipped in OOM tests
+
+        def _vision_cached(self, *_a, **_k):
+            raise self.torch.cuda.OutOfMemoryError("oom in cache")
+
+        def _vision_exact(self, *_a, **_k):
+            raise self.torch.cuda.OutOfMemoryError("oom in exact")
+
+    stub = _StubScorer()
+    # Bind the real method so the OOM-guard control flow runs against the stub.
+    stub._score_options_vision = Scorer._score_options_vision.__get__(stub)
+    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: None, raising=False)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: cuda_available)
+    return stub
+
+
+def _make_cpu_oom_stub(monkeypatch, cap):
+    """Stub that raises a CPU-shaped OOM (plain ``RuntimeError``)."""
+    import torch
+
+    from zero_shot.core.scorer import Scorer
+
+    class _StubProcessor:
+        image_processor = object()
+
+    class _StubModel:
+        pass
+
+    _StubModel.__name__ = "StubVisionCpuModel"
+
+    class _StubScorer:
+        multimodal = True
+        max_image_pixels = cap
+        _vision_kv_cache_ok = None
+        device = "cpu"
+        processor = _StubProcessor()
+        _model = _StubModel()
+        model_id = "acme/vision-cpu"
+
+        def __init__(self):
+            self.torch = torch
+
+        def _as_image(self, _image):
+            from PIL import Image
+
+            return Image.new("RGB", (8, 8), "red")
+
+        def _cap_image(self, image):
+            return image
+
+        def _vision_cached(self, *_a, **_k):
+            raise RuntimeError(
+                "DefaultCPUAllocator: can't allocate memory: you tried to allocate 512.00 MiB"
+            )
+
+        def _vision_exact(self, *_a, **_k):
+            raise AssertionError("exact path must not be reached on cache OOM")
+
+    stub = _StubScorer()
+    stub._score_options_vision = Scorer._score_options_vision.__get__(stub)
+    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: None, raising=False)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+    return stub
+
+
+def test_score_options_vision_oom_message_advertises_cap_when_set(monkeypatch):
+    """The OOM guard must name the currently configured `max_image_pixels` cap."""
+    boom = _make_vision_oom_stub(monkeypatch, cap=401_408)
+    with pytest.raises(RuntimeError) as info:
+        boom._score_options_vision("prompt", ["a", "b"], True, True, b"\x89PNG")
+    msg = str(info.value)
+    assert "Image scoring exhausted GPU memory" in msg
+    assert "currently 401408" in msg
+    assert "setting `max_image_pixels`" not in msg
+
+
+def test_score_options_vision_oom_message_suggests_cap_when_unset(monkeypatch):
+    """Without `max_image_pixels`, the message must suggest setting one."""
+    boom = _make_vision_oom_stub(monkeypatch, cap=None)
+    with pytest.raises(RuntimeError, match=r"setting `max_image_pixels`"):
+        boom._score_options_vision("prompt", ["a", "b"], True, True, b"\x89PNG")
+
+
+def test_score_options_vision_cpu_oom_message(monkeypatch):
+    """CPU OOM (plain ``RuntimeError`` on memory exhaustion) surfaces the cap hint
+    and names ``memory`` — not ``GPU memory``.
+    """
+    boom_unset = _make_cpu_oom_stub(monkeypatch, cap=None)
+    with pytest.raises(RuntimeError) as info:
+        boom_unset._score_options_vision(
+            "prompt", ["a", "b"], True, True, b"\x89PNG"
+        )
+    msg = str(info.value)
+    assert "Image scoring exhausted memory" in msg
+    assert "GPU memory" not in msg
+    assert "setting `max_image_pixels`" in msg
+
+    boom_set = _make_cpu_oom_stub(monkeypatch, cap=401_408)
+    with pytest.raises(RuntimeError) as info2:
+        boom_set._score_options_vision(
+            "prompt", ["a", "b"], True, True, b"\x89PNG"
+        )
+    msg2 = str(info2.value)
+    assert "currently 401408" in msg2
+    assert "setting `max_image_pixels`" not in msg2
+
+
+def test_score_options_vision_cpu_oom_skips_cuda_empty_cache(monkeypatch):
+    """On CPU we must not call ``torch.cuda.empty_cache`` (no CUDA allocator)."""
+    import torch
+
+    boom = _make_cpu_oom_stub(monkeypatch, cap=401_408)
+    called = []
+
+    def _spy():
+        called.append(True)
+
+    # The stub's torch already has empty_cache stubbed to no-op; replace with a
+    # spy and confirm the CPU path leaves it untouched (is_available()=False).
+    monkeypatch.setattr(torch.cuda, "empty_cache", _spy)
+    with pytest.raises(RuntimeError):
+        boom._score_options_vision("prompt", ["a", "b"], True, True, b"\x89PNG")
+    assert called == []
+
+
+def test_score_options_vision_oom_bubbles_through_kv_cache_fallback(monkeypatch):
+    """OOM from the KV-cache path must reach the outer guard, not be swallowed.
+
+    The inner `except oom: raise` short-circuits the fallback to the exact path,
+    so the exact path must NOT have been tried and `_vision_kv_cache_ok` must
+    stay ``None`` (NOT be set to ``False`` — that would disable the cache for
+    this run, even though OOM is unrelated to cache correctness).
+    """
+    import torch
+
+    from zero_shot.core.scorer import Scorer
+
+    exact_called = []
+
+    class _StubScorer:
+        multimodal = True
+        max_image_pixels = 401_408
+        _vision_kv_cache_ok = None
+        device = "cuda"
+        processor = type("P", (), {"image_processor": object()})()
+        _model = type("M", (), {"__name__": "StubVisionModel"})()
+        model_id = "acme/vision"
+
+        def __init__(self):
+            self.torch = torch  # set on instance, not class (name resolution)
+
+        def _as_image(self, _image):
+            from PIL import Image
+
+            return Image.new("RGB", (8, 8), "red")
+
+        def _cap_image(self, image):
+            return image
+
+        def _vision_cached(self, *_a, **_k):
+            raise self.torch.cuda.OutOfMemoryError("oom in cache")
+
+        def _vision_exact(self, *_a, **_k):
+            exact_called.append(True)
+            raise AssertionError("exact path must not be reached on cache OOM")
+
+    stub = _StubScorer()
+    stub._score_options_vision = Scorer._score_options_vision.__get__(stub)
+    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: None, raising=False)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+
+    with pytest.raises(RuntimeError, match=r"currently 401408"):
+        stub._score_options_vision("prompt", ["a", "b"], True, True, b"\x89PNG")
+    # Exact path was not invoked: the cache-path OOM propagated to the outer
+    # guard before the KV-cache fallback could silently swallow it.
+    assert exact_called == []
+    # And the cache path was not flagged as bad (correct — OOM is not its fault).
+    assert stub._vision_kv_cache_ok is None
+
+
+def test_cap_image_returns_input_unchanged_when_cap_is_none():
+    from PIL import Image
+
+    from zero_shot.core.scorer import Scorer
+
+    class _StubScorer:
+        max_image_pixels = None
+
+    image = Image.new("RGB", (1024, 1024), "red")
+    out = Scorer._cap_image(_StubScorer(), image)
+    assert out is image
+
+
+def test_cap_image_returns_input_when_under_budget():
+    from PIL import Image
+
+    from zero_shot.core.scorer import Scorer
+
+    image = Image.new("RGB", (200, 200), "blue")  # 40,000 px
+
+    class _StubScorer:
+        max_image_pixels = 40_000  # exactly at budget
+
+    out = Scorer._cap_image(_StubScorer(), image)
+    assert out is image
+
+
+def test_cap_image_downsamples_over_budget_to_preserve_aspect_ratio():
+    from PIL import Image
+
+    from zero_shot.core.scorer import Scorer
+
+    image = Image.new("RGB", (1600, 800), "red")  # 1,280,000 px, 2:1 aspect
+
+    class _StubScorer:
+        max_image_pixels = 100_000
+
+    out = Scorer._cap_image(_StubScorer(), image)
+    assert out.size[0] * out.size[1] <= 100_000
+    # Aspect ratio preserved within rounding.
+    assert abs(out.size[0] / out.size[1] - 2.0) < 0.01
+
+
+def test_cap_image_handles_tiny_budget():
+    from PIL import Image
+
+    from zero_shot.core.scorer import Scorer
+
+    image = Image.new("RGB", (10, 10), "red")
+
+    class _StubScorer:
+        max_image_pixels = 4  # smaller than a single pixel — must clamp to 1px
+
+    out = Scorer._cap_image(_StubScorer(), image)
+    assert out.size[0] >= 1 and out.size[1] >= 1
+
+
+def test_cap_image_applies_when_score_options_vision_runs(monkeypatch):
+    """End-to-end: an oversized image is downsampled before any scoring call.
+
+    We bind the real ``_score_options_vision`` to a stub that records the image
+    it received and returns canned results. The cap helper should have shrunk
+    a 1000x1000 input down to ≤ max_image_pixels total pixels.
+    """
+    import torch
+
+    from zero_shot.core.scorer import Scorer
+
+    received = []
+
+    class _StubScorer:
+        multimodal = True
+        max_image_pixels = 40_000
+        _vision_kv_cache_ok = False  # take the exact path to keep this simple
+        device = "cuda"
+        processor = type("P", (), {"image_processor": object()})()
+        _model = type("M", (), {"__name__": "StubVisionModel"})()
+        model_id = "acme/vision"
+
+        def __init__(self):
+            self.torch = torch
+
+        def _as_image(self, _image):
+            from PIL import Image
+
+            return Image.new("RGB", (1000, 1000), "green")
+
+        def _vision_exact(self, prefix, options, add_space, image):
+            received.append(image.size)
+            return []  # one entry per option; not asserted on here
+
+    stub = _StubScorer()
+    stub._score_options_vision = Scorer._score_options_vision.__get__(stub)
+    # Bind the real cap helper so we exercise it end-to-end.
+    stub._cap_image = Scorer._cap_image.__get__(stub)
+    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: None, raising=False)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+    stub._score_options_vision("prompt", ["a"], True, False, b"x")
+    assert received == [(200, 200)]

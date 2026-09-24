@@ -15,29 +15,45 @@ uv sync
 
 ## Configuration
 
-Two configs ship by default; pick whichever fits the host.
+One config ships ready-to-run; one is a blank template.
 
 | Config | Model | Hardware | Notes |
 |---|---|---|---|
-| `config.toml` *(default)* | `Qwen/Qwen3-VL-4B-Instruct` | GPU (RTX 5060 Ti) | Vision-language: serves text and image from one checkpoint. ~8 GB bf16. |
-| `config.cpu.toml` | `HuggingFaceTB/SmolVLM-500M-Instruct` | CPU | Idefics3 VLM, ~500M params, fp32 → ~2 GB RAM. Lower quality, runs anywhere, no `trust_remote_code` needed. |
+| `config.cpu.toml` *(shipped)* | `HuggingFaceTB/SmolVLM-500M-Instruct` | CPU | Idefics3 VLM, ~500M params, fp32 → ~2 GB RAM. Lower quality, runs anywhere, no `trust_remote_code` needed. |
+| `config.toml.example` *(shipped)* | — | — | Blank template. Copy to `config.toml` and edit, or let the model-advisor skill generate one for your GPU. |
+
+`config.toml` is your machine profile — it is **gitignored** so per-host
+customizations (model id, GPU key, `max_image_pixels`, etc.) never leak back
+to the repo. To set one up:
+
+```bash
+cp config.toml.example config.toml        # then edit the keys, or...
+                                          # ...use the model-advisor skill:
+                                          #   .opencode/skills/model-advisor/SKILL.md
+```
+
+The skill detects your VRAM, recommends a model that fits, downloads the
+weights, and writes `config.toml` with the right `max_image_pixels` cap.
+Every key is optional; anything you leave unset falls back to the built-in
+default.
 
 Pass a config to the CLI or set `ZERO_SHOT_CONFIG`:
 
 ```bash
-zero-shot-serve                          # config.toml (Qwen3-VL-4B on GPU)
+zero-shot-serve                          # config.toml (your machine profile)
 zero-shot-serve --cpu-low                # config.cpu.toml (SmolVLM-500M on CPU)
 zero-shot-serve --config config.cpu.toml # explicit
 ```
 
-`config.toml` in detail:
+Available keys:
 
 ```toml
-model = "Qwen/Qwen3-VL-4B-Instruct"
+model = "Qwen/Qwen3-VL-4B-Instruct"      # any native-transformers VLM
 save_to = "models/qwen3-vl-4b-instruct"  # loaded from disk after first download
 device = "auto"                          # auto | cpu | gpu
 gpu = "rtx_5060_ti"                      # which GPU when device = "gpu"
 quantize = "auto"                        # auto | bf16 | fp32 | int8
+max_image_pixels = ""                    # omit / "" = model native; cap helps on small GPUs
 kv_cache = true                          # reuse one KV cache for the shared prompt
 temperature = 1.0                        # option softmax; >1 less certain, <1 sharper
 calibrate = true                         # subtract content-free option priors
@@ -47,8 +63,8 @@ calibration_context = "N/A"              # the content-free context used for tha
 Paths in `save_to` are resolved from the project directory. Once populated the
 model is loaded with `local_files_only=True` (no network). Overridable with
 `$ZERO_SHOT_CONFIG`, `$ZERO_SHOT_MODEL`, `$ZERO_SHOT_SAVE_TO`, `$ZERO_SHOT_DEVICE`,
-`$ZERO_SHOT_GPU`, or the CLI flags `--config`, `--model-id`, `--save-to`,
-`--device`, `--gpu`.
+`$ZERO_SHOT_GPU`, `$ZERO_SHOT_MAX_IMAGE_PIXELS`, or the CLI flags `--config`,
+`--model-id`, `--save-to`, `--device`, `--gpu`.
 
 ### KV cache
 
@@ -87,7 +103,7 @@ criteria are listed can still prime the model.
 Measured on the payouts example (state: "Help! My payouts have been failing for 3
 days.", `criteria` for `department`):
 
-**Qwen3-VL-4B-Instruct** (`config.toml`, GPU, bf16):
+**Qwen3-VL-4B-Instruct** (your `config.toml`, GPU, bf16):
 
 | option | calibrated logprob, order A (billing, technical, sales) | order B (sales, technical, billing) | Δ |
 |---|---|---|---|
@@ -132,8 +148,8 @@ The `config.cpu.toml` preset forces `device = "cpu"` and uses
 **SmolVLM-500M-Instruct** with `quantize = "fp32"`: ~500M params, ~2 GB RAM,
 runs on a laptop. fp32 keeps the KV-cached scores identical to the exact path
 and sidesteps emulated bf16 on mobile/consumer Intel CPUs. Quality is lower than
-Qwen3-VL-4B (the winner can flip between criteria orderings); prefer
-`config.toml` whenever a GPU is available.
+Qwen3-VL-4B (the winner can flip between criteria orderings); prefer a GPU
+profile whenever a GPU is available.
 
 ### CPU precision (`quantize`)
 
@@ -166,9 +182,9 @@ quantized. Overridable with `--quantize` or `$ZERO_SHOT_QUANTIZE`.
 ```
 
 `--cpu-low` serves SmolVLM-500M on CPU from `config.cpu.toml` — handy on a
-laptop with no GPU, where the default Qwen3-VL-4B would be slow. The server preloads
-the configured model at startup and logs the device, so you can confirm whether it
-is running on CPU or GPU.
+laptop with no GPU, where a large GPU profile would be slow or OOM. The
+server preloads the configured model at startup and logs the device, so
+you can confirm whether it is running on CPU or GPU.
 
 ### HTTP API
 
@@ -193,8 +209,9 @@ Returns `{"model": ..., "answers": { "<id>": <answer> }, "results": [ ... ], "us
 (`noul`, `choice` + `probabilities` + `confidence`, `score` + `legend` +
 `probabilities` + `confidence`).
 
-`model` is optional and defaults to `config.toml`; if a different model is given it
-is loaded from (or downloaded into) a sibling directory under `models/`.
+`model` is optional and defaults to the `model` value in your `config.toml`; if a
+different model is given it is loaded from (or downloaded into) a sibling
+directory under `models/`.
 `GET /api/health` reports the configured model, device, and `multimodal`
 (`true`/`false` once the model is loaded, `null` before) so clients know whether
 image input is available.
@@ -203,10 +220,10 @@ image input is available.
 
 The same questions can be grounded in an image, using the identical logit
 extraction (full-vocabulary `log P(token)` + EOS, corrected softmax) — the image is
-just prepended to the prompt through the model's chat template. The default
-`config.toml` already points at a vision-language checkpoint
-(`Qwen/Qwen3-VL-4B-Instruct`, ~8 GB in bf16), so both text and image requests
-work without swapping configs. For a reasoning variant, set
+just prepended to the prompt through the model's chat template. Both the
+template (`config.toml.example`) and the CPU preset (`config.cpu.toml`) use
+vision-language checkpoints, so text and image requests work without
+swapping configs. For a reasoning variant, set
 `model = "Qwen/Qwen3-VL-4B-Thinking"`.
 
 CLI (`--image`/`-i` takes a file, or `-` for raw bytes on stdin):
@@ -291,9 +308,13 @@ you want the weights to persist across container recreation.
 
 ### GPU
 
-The GPU service (CUDA + `config.toml`, i.e. Qwen3-VL-4B) is **commented out** in
-`docker-compose.yml`: building it downloads the CUDA PyTorch wheels plus several GB
-of NVIDIA/CUDA packages. To use it, uncomment the `zero-shot-gpu` service and run:
+The GPU service (CUDA + your `config.toml`) is **commented out** in
+`docker-compose.yml`: building it downloads the CUDA PyTorch wheels plus
+several GB of NVIDIA/CUDA packages. The image does **not** ship a
+`config.toml` (it is per-host and gitignored), so generate one first —
+`cp config.toml.example config.toml` then edit, or let the
+[model-advisor skill](.opencode/skills/model-advisor/SKILL.md) generate
+one for you — before uncommenting. Then:
 
 ```bash
 docker compose --profile gpu up --build zero-shot-gpu   # http://127.0.0.1:8001

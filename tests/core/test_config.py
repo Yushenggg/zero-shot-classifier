@@ -68,6 +68,8 @@ def test_empty_save_to_disables_disk_cache(tmp_path):
         "temperature = -1\n",
         'quantize = "nope"\n',
         'device = "tpu"\n',
+        "max_image_pixels = 0\n",
+        "max_image_pixels = -1\n",
     ],
 )
 def test_invalid_config_raises_value_error(tmp_path, body):
@@ -103,6 +105,12 @@ def test_config_normalizes_quantize_and_device(tmp_path):
     config = load_config(path)
     assert config.quantize == "int8"
     assert config.device == "cpu"
+
+
+def test_max_image_pixels_parses_and_defaults(tmp_path):
+    path = _write_config(tmp_path, "max_image_pixels = 401408\n")
+    assert load_config(path).max_image_pixels == 401408
+    assert load_config(_write_config(tmp_path, "")).max_image_pixels is None
 
 
 def test_default_config_path_honors_env_override(tmp_path, monkeypatch):

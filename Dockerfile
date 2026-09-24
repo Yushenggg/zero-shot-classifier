@@ -41,7 +41,11 @@ RUN if [ "${TORCH_BACKEND}" != "cpu" ]; then \
       && rm -rf /var/lib/apt/lists/*; \
     fi
 
-COPY config.toml config.cpu.toml ./
+COPY config.cpu.toml ./
+
+# `config.toml` is per-host and gitignored — bind-mount or set $ZERO_SHOT_CONFIG
+# to point at it from your compose/run command; we don't copy the example into
+# the image because that would make the example masquerade as your real config.
 
 EXPOSE 8000
 CMD ["zero-shot-serve"]

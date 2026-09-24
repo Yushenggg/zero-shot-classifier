@@ -3,6 +3,8 @@ from __future__ import annotations
 import io
 import logging
 
+from PIL import Image
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_QUALITY = 85
@@ -10,15 +12,13 @@ _DEFAULT_MIN_EDGE = 256
 _SCALE_STEP = 0.75
 
 
-def decode_image(data: bytes):
+def decode_image(data: bytes) -> Image.Image:
     """Decode ``data`` into an RGB PIL image, raising ``ValueError`` on failure.
 
     EXIF is deliberately ignored: the pixels are used as stored, with no
     orientation transpose. (It would otherwise only be applied on some code
     paths and not others.)
     """
-    from PIL import Image
-
     try:
         with Image.open(io.BytesIO(data)) as src:
             src.load()
@@ -46,8 +46,6 @@ def downscale_to_byte_limit(
     """
     if len(data) <= max_bytes:
         return data
-
-    from PIL import Image
 
     im = decode_image(data)
 

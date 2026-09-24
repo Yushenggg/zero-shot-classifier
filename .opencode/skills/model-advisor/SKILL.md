@@ -5,9 +5,12 @@ description: Use when the user asks which model to run for this project, wants t
 
 # Model advisor
 
-The project ships two configs (`config.toml` for GPU, `config.cpu.toml` for CPU)
-but the user may want a different model based on hardware or use case. This skill
-walks through detection → search → recommendation → download → configure.
+The project ships `config.cpu.toml` (universal CPU fallback) and a blank
+`config.toml.example`. `config.toml` is gitignored — every user generates
+their own machine profile, and this skill is how you do it: detection →
+search → recommendation → download → configure (`config.toml` written
+from `config.toml.example` with the right model, `gpu` key, and
+`max_image_pixels` cap).
 
 Do not skip steps. Do not auto-download before the user picks.
 
@@ -120,9 +123,29 @@ significantly faster than the equivalent-size VLMs on text-only prompts.
 
 ## 5. Ask the user to pick
 
-Show the recommendation and the alternatives. **Do not download until the
-user picks.** If the user says "use the default", confirm which config file
-(`config.toml` GPU vs `config.cpu.toml` CPU) and skip to step 7.
+Show the recommendation and the alternatives with the per-model VRAM and
+image cap so the tradeoff is visible at pick time. **Do not download
+until the user picks.** If the user says "use the default", confirm which
+config file — they almost certainly mean `config.cpu.toml` for the shipped
+CPU preset, since `config.toml` is per-host. Then skip to step 7.
+
+For each candidate compute `footprint ≈ 2 × params` and
+`headroom ≈ total VRAM − footprint − 1 GB`, then look up the cap from the
+"Estimating `max_image_pixels`" section in step 7. Present:
+
+| Model | Footprint | Headroom | `max_image_pixels` | Effective image (square) |
+|---|---|---|---|---|
+| `<model>` | ~X GB | ~Y GB | `<cap>` / omit | ≈ Z MB (~S×S px, ~N tokens) |
+
+"Effective image" is what the processor resamples any upload to,
+**assuming a square**: `√max_image_pixels` px on a side,
+`≈ max_image_pixels × 3 / 1024²` MB of raw RGB data (3 bytes/pixel) — the
+data the vision encoder actually sees. The number of *vision tokens* this
+expands to depends on the model's patch size; for Qwen-VL it's
+`≈ cap / 784`. Users can always upload larger originals — we downsample
+to fit. The cap bounds the model's view, not the upload size: a tighter
+cap means less fine detail (small text, subtle features) but never a
+rejected upload.
 
 ## 6. Download
 
@@ -151,18 +174,66 @@ save_to = "models/<short-name>"   # relative to project root
 device = "auto" | "cpu" | "gpu"
 gpu = "<gpu key from nvidia-smi>"  # e.g. "rtx_5060_ti"
 quantize = "auto" | "bf16" | "fp32" | "int8"
+max_image_pixels = ""   # omit / "" = model's native image budget
 kv_cache = true
 temperature = 1.0
 calibrate = true
 calibration_context = "N/A"
 ```
 
-If switching the **default** (changes to `config.toml`), also update:
+### Estimating `max_image_pixels`
+
+The cap is applied **before** the model's processor sees the image: we
+resize the PIL image so its total pixel count is at most
+`max_image_pixels` (aspect ratio preserved). This is model-agnostic —
+Qwen-VL, Idefics3, SmolVLM, LLaVA, InternVL, ... all flow through the
+same code path, so one cap table covers the whole VLM landscape.
+
+1. **Footprint.** bf16 size ≈ 2 × params in billions (vision tower included).
+2. **Headroom.** `total VRAM (nvidia-smi memory.total) − footprint − ~1 GB
+   overhead` — what's left for image activations and per-option KV cache.
+3. **Cap.** Pick from the headroom-based table. Halve the cap value if the
+   scorer still OOMs — activations track the cap roughly linearly with
+   image area.
+
+| Headroom after the chosen model | `max_image_pixels` | ≈ effective image (square) |
+|---|---|---|
+| ≥ 4 GB | omit | ~48 MB raw (~4096×4096 px) |
+| 2 – 4 GB | `1605632` | ~4.6 MB raw (~1267×1267 px) |
+| 1 – 2 GB | `802816` | ~2.3 MB raw (~896×896 px) |
+| < 1 GB | `401408` | ~1.1 MB raw (~633×633 px) |
+
+"Effective image" assumes a square: `√max_image_pixels` px on a side, with
+the raw RGB size being `max_image_pixels × 3` bytes. That's the data the
+vision encoder actually processes after downsampling. Users can still
+upload larger originals — the cap bounds the model's view, not the upload.
+
+Vision-token count depends on the model's patch architecture (Qwen-VL ≈
+`cap / 784`); the cap itself is in pixels and stays portable across
+families.
+
+Concrete picks for the project's reference tiers:
+
+| Model (from step 5) | Card | Footprint | Headroom | Cap | Effective image (square) |
+|---|---|---|---|---|---|
+| `Qwen/Qwen3-VL-4B-Instruct` | 16 GB (RTX 5060 Ti) | ~8 GB | ~7 GB | omit | ~48 MB raw |
+| `Qwen/Qwen3-VL-2B-Instruct` | 8 GB | ~4 GB | ~3 GB | `1605632` | ~4.6 MB raw |
+| `Qwen/Qwen3-VL-2B-Instruct` | 6 GB (RTX 3060 Laptop) | ~4 GB | ~0.7 GB | `401408` | ~1.1 MB raw |
+| `HuggingFaceTB/SmolVLM-500M-Instruct` | CPU | ~2 GB RAM | n/a | omit | already tiny — set only if you see RAM pressure |
+
+If the scorer still OOMs at the chosen cap, halve the pixel value (tokens
+halve, activations roughly quarter). The OOM message itself names the
+current cap and a sensible next step.
+
+If switching the **default model** (the one `config.toml.example` ships
+with and `DEFAULT_MODEL_ID` points at), also update:
 
 - `README.md` — Configuration table + bias-table placeholder
 - `Dockerfile` / `docker-compose.yml` — only if the default's CPU image changes
 - `docs/index.html` — "Choosing a model" / "Trying it on a vision model" sections
 - `zero_shot/core/config.py` — `DEFAULT_MODEL_ID` / `DEFAULT_SAVE_TO`
+- `config.toml.example` — keep the tracked template's `model = "..."` line
+  in sync with the code default so a fresh `cp` lands on the same model
 
 ## 8. Smoke test
 

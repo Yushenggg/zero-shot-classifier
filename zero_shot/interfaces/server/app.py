@@ -6,12 +6,18 @@ import os
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator, Awaitable, Callable
+
+    from starlette.requests import Request
+    from starlette.responses import Response
 
 from ...core.classifier import classify
 from ...core.config import Config, load_config
@@ -64,7 +70,7 @@ def _too_large_response() -> JSONResponse:
 
 
 @asynccontextmanager
-async def lifespan(app: FastAPI):
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     global _RESOLVED_DEVICE
     logger.info(
         "Loading model %s on device=%s (gpu=%s, kv_cache=%s, quantize=%s) ...",
@@ -81,6 +87,7 @@ async def lifespan(app: FastAPI):
             device=CONFIG.device,
             gpu=CONFIG.gpu,
             quantize=CONFIG.quantize,
+            max_image_pixels=CONFIG.max_image_pixels,
         )
         _RESOLVED_DEVICE = scorer.device
         logger.info(
@@ -103,7 +110,9 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
 @app.middleware("http")
-async def limit_request_body(request, call_next):
+async def limit_request_body(
+    request: Request, call_next: Callable[[Request], Awaitable[Response]]
+) -> Response:
     """Reject oversized bodies from Content-Length before the parser reads them."""
     content_length = request.headers.get("content-length")
     if content_length is not None:
@@ -139,6 +148,7 @@ def health() -> HealthResponse:
         calibrate=CONFIG.calibrate,
         model_loaded=scorer is not None,
         multimodal=scorer.multimodal if scorer is not None else None,
+        max_image_pixels=CONFIG.max_image_pixels,
     )
 
 
@@ -164,6 +174,7 @@ def _run_classify(
             device=CONFIG.device,
             gpu=CONFIG.gpu,
             quantize=CONFIG.quantize,
+            max_image_pixels=CONFIG.max_image_pixels,
             temperature=temperature if temperature is not None else CONFIG.temperature,
             use_kv_cache=kv_cache if kv_cache is not None else CONFIG.kv_cache,
             calibrate=calibrate if calibrate is not None else CONFIG.calibrate,

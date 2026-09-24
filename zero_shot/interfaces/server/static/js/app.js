@@ -49,7 +49,7 @@ function setVisionAvailable(available) {
   modeToggle.disabled = disabled;
   modeToggleLabel.classList.toggle("disabled", disabled);
   modeToggleLabel.title = disabled
-    ? "The configured model is text-only. Serve a vision model (e.g. config.toml or config.cpu.toml) for image input."
+    ? "The configured model is text-only. Copy config.toml.example to config.toml and pick a vision-language model (config.cpu.toml ships with SmolVLM-500M)."
     : "";
   const imageOption = exampleSelect.querySelector('option[value="image"]');
   if (imageOption) imageOption.disabled = disabled;
@@ -98,7 +98,12 @@ async function checkHealth() {
       document.getElementById("modelId").textContent = data.model_id;
       dot.className = "dot ok";
       const dev = data.device + (data.device !== "cpu" ? " / " + data.gpu : "");
-      statusText.textContent = (data.model_loaded ? "model loaded" : "loading on first run") + " · " + dev;
+      let text = (data.model_loaded ? "model loaded" : "loading on first run") + " · " + dev;
+      if (data.max_image_pixels) {
+        const side = Math.round(Math.sqrt(data.max_image_pixels));
+        text += " · image cap ≈ " + side + "×" + side + " px";
+      }
+      statusText.textContent = text;
       setVisionAvailable(data.multimodal);
     } else {
       dot.className = "dot err";

@@ -40,11 +40,26 @@ line-length = 100
 src = ["zero_shot"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "B", "UP", "BLE"]
+select = ["E", "F", "W", "I", "B", "UP", "BLE", "TCH", "ANN"]
+
+# TCH catches type-only pydantic / typing imports that should live under
+# `if TYPE_CHECKING:`. ANN enforces type annotations, so pydantic model
+# signatures can't silently drift from the schema.
+# ANN401 disallows `typing.Any` in signatures; we keep `Any` for user-supplied
+# JSON (state / questions / image blobs) — that's the correct type, not a
+# shortcut.
+ignore = ["ANN401"]
 
 [tool.ruff.lint.per-file-ignores]
 # FastAPI's File()/Form(...) in argument defaults are the documented idiom.
 "zero_shot/interfaces/server/app.py" = ["B008"]
+# Tests: stubs frequently lack annotations on purpose; ANN + TC003 are noisy
+# there (Path is used at runtime, but `from __future__ import annotations`
+# makes the rule conservatively flag it).
+"tests/**/*.py" = ["ANN", "TC003"]
+# `__init__.py` re-exports and protocol-like declarations; ANN is overkill.
+"zero_shot/__init__.py" = ["ANN", "F401"]
+"zero_shot/**/__init__.py" = ["ANN", "F401"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["zero_shot"]
