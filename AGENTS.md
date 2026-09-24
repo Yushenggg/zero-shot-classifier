@@ -8,8 +8,9 @@ Vision-language is the default; text and image requests share one scoring path.
 - `zero_shot/core/` — interface-independent logic (`classifier.py`, `scorer.py`, `config.py`, `models.py`, `image_utils.py`)
 - `zero_shot/interfaces/cli/` — `zero-shot` command
 - `zero_shot/interfaces/server/` — `zero-shot-serve` command, FastAPI app (`app.py`), HTTP schemas (`schemas.py`), `static/` UI
-- `config.toml` — default config (GPU, vision-language)
-- `config.cpu.toml` — CPU preset (SmolVLM-500M-Instruct)
+- `config.toml.example` — blank template (tracked); copy to `config.toml`
+- `config.toml` — your machine profile (gitignored, per-host)
+- `config.cpu.toml` — CPU preset (SmolVLM-500M-Instruct, ships ready-to-run)
 - `examples/` — request bodies
 - `docs/index.html` — design write-up
 - `.opencode/skills/model-advisor/SKILL.md` — model selection + bias-table measurement recipe
@@ -27,7 +28,9 @@ Vision-language is the default; text and image requests share one scoring path.
 ## Conventions
 - Model weights live in `./models/<short-name>/` and are loaded with
   `local_files_only=True` after the first download.
-- `config.toml` is the GPU/quality default; `config.cpu.toml` is the universal CPU fallback.
+- `config.toml` is your machine profile (gitignored); copy from
+  `config.toml.example` or have the model-advisor skill generate one.
+  `config.cpu.toml` is the universal CPU fallback and ships ready-to-run.
 - Vision-language is the default mode; the UI disables Image mode for text-only checkpoints.
 
 ## Tests

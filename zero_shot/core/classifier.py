@@ -110,6 +110,7 @@ def classify_one(
     device: str = "cpu",
     gpu: str | None = None,
     quantize: str = "auto",
+    max_image_pixels: int | None = None,
     temperature: float = 1.0,
     use_kv_cache: bool = False,
     calibrate: bool = False,
@@ -118,7 +119,14 @@ def classify_one(
 ) -> Classification:
     question = parse_question(spec)
     prompt, options = _build_question(name, question, state)
-    scorer = get_scorer(model_id, save_to=save_to, device=device, gpu=gpu, quantize=quantize)
+    scorer = get_scorer(
+        model_id,
+        save_to=save_to,
+        device=device,
+        gpu=gpu,
+        quantize=quantize,
+        max_image_pixels=max_image_pixels,
+    )
     texts = [text for _, text in options]
     # Vision prompts end at the assistant generation prompt, so the option
     # follows immediately (no synthetic leading space); text prompts end with
@@ -211,6 +219,7 @@ def classify(
     device: str = "cpu",
     gpu: str | None = None,
     quantize: str = "auto",
+    max_image_pixels: int | None = None,
     temperature: float = 1.0,
     use_kv_cache: bool = False,
     calibrate: bool = False,
@@ -246,6 +255,7 @@ def classify(
             device=device,
             gpu=gpu,
             quantize=quantize,
+            max_image_pixels=max_image_pixels,
             temperature=temperature,
             use_kv_cache=use_kv_cache,
             calibrate=calibrate,

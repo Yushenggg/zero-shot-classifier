@@ -22,7 +22,7 @@ def test_load_config_reads_values_and_resolves_paths(tmp_path):
 model = "acme/model"
 save_to = "models/acme"
 device = "cpu"
-gpu = "rtx_5060_ti"
+gpu = "test-gpu"
 quantize = "fp32"
 kv_cache = false
 temperature = 0.5
@@ -68,6 +68,8 @@ def test_empty_save_to_disables_disk_cache(tmp_path):
         "temperature = -1\n",
         'quantize = "nope"\n',
         'device = "tpu"\n',
+        "max_image_pixels = 0\n",
+        "max_image_pixels = -1\n",
     ],
 )
 def test_invalid_config_raises_value_error(tmp_path, body):
@@ -105,8 +107,40 @@ def test_config_normalizes_quantize_and_device(tmp_path):
     assert config.device == "cpu"
 
 
+def test_max_image_pixels_parses_and_defaults(tmp_path):
+    path = _write_config(tmp_path, "max_image_pixels = 401408\n")
+    assert load_config(path).max_image_pixels == 401408
+    assert load_config(_write_config(tmp_path, "")).max_image_pixels is None
+
+
 def test_default_config_path_honors_env_override(tmp_path, monkeypatch):
     path = _write_config(tmp_path, 'model = "env-path/model"\n')
     monkeypatch.setenv("ZERO_SHOT_CONFIG", str(path))
     # No explicit path: load_config must resolve $ZERO_SHOT_CONFIG.
     assert load_config().model == "env-path/model"
+
+
+def test_load_config_ignores_directory_at_path(tmp_path):
+    """A directory at the config path (Docker compose bind-mount of a
+    missing host file) must be skipped, not read with ``read_text()``.
+
+    Regression: a host-side ``config.toml`` that doesn't exist makes Docker
+    create a directory at the mount point. ``Path.exists()`` returns True for
+    directories, so the old code crashed with ``IsADirectoryError`` before
+    the server could even start.
+    """
+    config_path = tmp_path / "config.toml"
+    config_path.mkdir()  # directory, not file
+    config = load_config(config_path)
+    # Falls back to defaults rather than crashing; the directory's parent is
+    # the project root, so relative save_to paths still resolve from there.
+    assert isinstance(config, Config)
+    assert config.model  # populated from defaults
+    assert config.device == "auto"
+    assert config.base_dir == tmp_path
+
+
+def test_load_config_explicit_missing_file_uses_defaults(tmp_path):
+    """The missing-file branch must still work after switching to is_file()."""
+    config = load_config(tmp_path / "does-not-exist.toml")
+    assert config.device == "auto"

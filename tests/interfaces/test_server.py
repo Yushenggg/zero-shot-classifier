@@ -24,6 +24,22 @@ def test_health(client):
     assert body["model_loaded"] is False
     assert body["multimodal"] is None
     assert {"model_id", "device", "gpu", "quantize", "kv_cache"} <= set(body)
+    # `max_image_pixels` is exposed so the UI can show the cap; defaults to None
+    # when no cap is configured.
+    assert "max_image_pixels" in body
+    assert body["max_image_pixels"] is None
+
+
+def test_health_surfaces_configured_image_cap(client):
+    from zero_shot.interfaces.server import app as app_module
+
+    original = app_module.CONFIG
+    try:
+        app_module.CONFIG = app_module.CONFIG.model_copy(update={"max_image_pixels": 401408})
+        response = client.get("/api/health")
+        assert response.json()["max_image_pixels"] == 401408
+    finally:
+        app_module.CONFIG = original
 
 
 def test_classify_text_success(client, fake_scorer):

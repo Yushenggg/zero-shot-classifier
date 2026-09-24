@@ -17,9 +17,6 @@ save_to = "models/smolvlm-500m-instruct"
 # Force CPU: this config is for machines without a usable GPU.
 device = "cpu"
 
-# Kept for compatibility with `gpu = "..."` validation; unused on CPU.
-gpu = "rtx_5060_ti"
-
 # fp32 keeps the logprobs exact: with the KV cache on, the cached path is
 # identical to the exact path. It also avoids PyTorch's slow emulated bf16 on
 # mobile/consumer Intel chips (12th gen+, where AVX-512_BF16 is fused off).

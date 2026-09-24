@@ -51,6 +51,9 @@ class HealthResponse(BaseModel):
     model_loaded: bool
     # None until the model is loaded, so the UI can hide/disable image mode.
     multimodal: bool | None
+    # Image pixel cap configured in `max_image_pixels` (None = no cap, model
+    # native). Lets the UI show whether downsampling is active.
+    max_image_pixels: int | None = None
 
 
 class ErrorResponse(BaseModel):

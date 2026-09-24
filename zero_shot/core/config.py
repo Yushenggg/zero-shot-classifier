@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 DEFAULT_MODEL_ID = "Qwen/Qwen3-VL-4B-Instruct"
 DEFAULT_SAVE_TO: str | None = "models/qwen3-vl-4b-instruct"
 DEFAULT_DEVICE = "auto"
-DEFAULT_GPU = "rtx_5060_ti"
+DEFAULT_GPU = ""
 DEFAULT_QUANTIZE = "auto"
 QUANTIZE_MODES = ("auto", "bf16", "fp32", "int8")
 DEVICE_MODES = ("auto", "cpu", "gpu", "cuda")
@@ -22,17 +22,7 @@ _ENV_KEYS = {
     "device": "ZERO_SHOT_DEVICE",
     "gpu": "ZERO_SHOT_GPU",
     "quantize": "ZERO_SHOT_QUANTIZE",
-}
-
-# GPUs we know how to run on. Compute capability / CUDA are informational; the
-# name is checked against torch.cuda.get_device_name() when device = "gpu".
-SUPPORTED_GPUS: dict[str, dict[str, object]] = {
-    "rtx_5060_ti": {
-        "name": "NVIDIA GeForce RTX 5060 Ti",
-        "compute_capability": "12.0",
-        "cuda": "13.0",
-        "vram_gb": 16,
-    },
+    "max_image_pixels": "ZERO_SHOT_MAX_IMAGE_PIXELS",
 }
 
 
@@ -55,6 +45,11 @@ def _clean(value: object) -> str | None:
     return None if text.strip().lower() in ("", "null", "none") else text
 
 
+def _int_or_none(value: object) -> int | None:
+    text = _clean(value)
+    return None if text is None else int(text)
+
+
 def _env_override(key: str) -> str | None:
     """Return the $ZERO_SHOT_* value for `key`, or None if unset/empty."""
     return _clean(os.environ.get(_ENV_KEYS[key]))
@@ -75,6 +70,7 @@ class Config(BaseModel):
     device: str = DEFAULT_DEVICE
     gpu: str = DEFAULT_GPU
     quantize: str = DEFAULT_QUANTIZE
+    max_image_pixels: int | None = None
     kv_cache: bool = True
     temperature: float = 1.0
     calibrate: bool = True
@@ -97,6 +93,13 @@ class Config(BaseModel):
                 f"config quantize must be one of {QUANTIZE_MODES}, got {mode!r}"
             )
         return mode
+
+    @field_validator("max_image_pixels")
+    @classmethod
+    def _max_image_pixels_positive(cls, value: int | None) -> int | None:
+        if value is not None and value <= 0:
+            raise ValueError(f"config max_image_pixels must be > 0, got {value}")
+        return value
 
     @field_validator("device")
     @classmethod
@@ -141,8 +144,17 @@ def load_config(path: str | Path | None = None) -> Config:
     Missing file or keys fall back to the built-in defaults.
     """
     config_path = Path(path) if path else _default_config_path()
-    if config_path.exists():
+    if config_path.is_file():
         data = tomllib.loads(config_path.read_text())
+        base_dir = config_path.resolve().parent
+    elif config_path.is_dir():
+        # A directory at the config path usually means a Docker compose
+        # bind-mount pointed at a host file that doesn't exist: Docker
+        # creates the directory in place of the file, which would make
+        # ``exists()`` true and crash ``read_text()`` with IsADirectoryError.
+        # Treat it as missing and fall back to defaults; the directory's
+        # parent is the project root, so relative save_to paths still resolve.
+        data = {}
         base_dir = config_path.resolve().parent
     else:
         data = {}
@@ -162,6 +174,7 @@ def load_config(path: str | Path | None = None) -> Config:
         device=str(pick("device", DEFAULT_DEVICE)),
         gpu=str(pick("gpu", DEFAULT_GPU)),
         quantize=str(pick("quantize", DEFAULT_QUANTIZE)),
+        max_image_pixels=_int_or_none(pick("max_image_pixels", None)),
         kv_cache=bool(data.get("kv_cache", True)),
         temperature=data.get("temperature", 1.0),
         calibrate=bool(data.get("calibrate", True)),

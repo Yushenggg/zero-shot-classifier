@@ -5,7 +5,7 @@
 # across rebuilds. The config file is mounted read-only so the container always
 # sees your local edits without a rebuild.
 #
-# A GPU service (CUDA + Qwen3-VL-4B) is provided but commented out: building it
+# A GPU service (CUDA + your `config.toml`) is provided but commented out: building it
 # pulls the CUDA PyTorch wheels plus the ~GB of NVIDIA/CUDA deps, so it is
 # opt-in. To use it, uncomment the `zero-shot-gpu` service below and run
 # (requires the NVIDIA Container Toolkit on the host):
@@ -26,8 +26,11 @@ services:
       ZERO_SHOT_CONFIG: /app/config.cpu.toml
     restart: unless-stopped
 
-  # GPU service: CUDA + the default Qwen3-VL-4B config.
+  # GPU service: CUDA + your machine's `config.toml`.
   # Uncomment to enable; build with `--build-arg TORCH_BACKEND=cu130`.
+  # `config.toml` is gitignored — generate one first (`cp config.toml.example
+  # config.toml` or use the model-advisor skill) so the bind mount has a file
+  # to mount. The image itself does not ship a `config.toml`.
   # zero-shot-gpu:
   #   profiles: ["gpu"]
   #   build:
@@ -43,7 +46,7 @@ services:
   #   environment:
   #     ZERO_SHOT_CONFIG: /app/config.toml
   #   # Requires the NVIDIA Container Toolkit on the host (nvidia-ctk runtime
-  #   # configure --runtime=docker). Verifies the RTX 5060 Ti (Blackwell sm_120).
+  #   # configure --runtime=docker). Last exercised on an RTX 5060 Ti (Blackwell sm_120).
   #   deploy:
   #     resources:
   #       reservations:

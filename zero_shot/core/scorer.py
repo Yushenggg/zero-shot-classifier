@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from .config import DEFAULT_MODEL_ID, SUPPORTED_GPUS
+from .config import DEFAULT_MODEL_ID
 from .models import SequenceScore, TokenScore
 
 logger = logging.getLogger(__name__)
@@ -54,7 +54,7 @@ def resolve_precision(device: str, quantize: str = "auto") -> tuple[str, bool]:
     return ("float32", False) if is_cpu else ("bfloat16", False)
 
 
-def _quantize_dynamic(model):
+def _quantize_dynamic(model: Any) -> Any:
     """Quantize Linear layers to int8 (dynamic). No-op if torch.ao is missing."""
     import warnings
 
@@ -72,11 +72,11 @@ _MODEL_PATTERNS = ["*.json", "*.safetensors", "*.jinja"]
 
 
 def resolve_device(device: str = "cpu", gpu: str | None = None) -> str:
-    """Map the config device to a torch device string, validating the GPU.
+    """Map the config device to a torch device string.
 
     `device` is "auto" (use CUDA if available, else CPU), "cpu", or
-    "gpu"/"cuda". When GPU mode is requested, `gpu` names one of the supported
-    GPUs in `config.SUPPORTED_GPUS`.
+    "gpu"/"cuda". ``gpu`` is a free-form label (recorded for documentation
+    and surfaced on /api/health); it is not validated against any whitelist.
     """
     device = (device or "auto").strip().lower()
 
@@ -98,15 +98,6 @@ def resolve_device(device: str = "cpu", gpu: str | None = None) -> str:
             "run WITHOUT `uv run`/`uv sync` (which revert to the CPU wheel): use "
             "`.venv/bin/zero-shot-serve` or `uv run --no-sync ...`."
         )
-    actual = torch.cuda.get_device_name(0)
-    if gpu:
-        info = SUPPORTED_GPUS.get(gpu)
-        if info is None:
-            raise ValueError(f"Unknown gpu {gpu!r}. Supported: {sorted(SUPPORTED_GPUS)}.")
-        if str(info["name"]).lower() not in actual.lower():
-            raise RuntimeError(
-                f"config gpu = {gpu!r} expects {info['name']!r} but found {actual!r}."
-            )
     return "cuda"
 
 
@@ -142,7 +133,9 @@ class Scorer:
         save_to: str | None = None,
         device: str = "cpu",
         quantize: str = "auto",
+        max_image_pixels: int | None = None,
     ) -> None:
+        self.max_image_pixels = max_image_pixels
         if device == "cpu":
             try:
                 import psutil
@@ -196,6 +189,18 @@ class Scorer:
             )
             self.processor = None
         self.multimodal = getattr(self.processor, "image_processor", None) is not None
+        if max_image_pixels is not None and self.multimodal:
+            # Model-agnostic: any VLM that takes a PIL image (Qwen-VL, Idefics3,
+            # SmolVLM, LLaVA, InternVL, ...) sees an image whose total pixel
+            # count is bounded. The processor's own size kwarg (``max_pixels``,
+            # ``size``, ``max_image_size``, ...) varies per family, so we cap
+            # upstream where the math is the same for everyone.
+            logger.info(
+                "Vision image-pixel cap active: max_image_pixels=%d (image is "
+                "downsampled so total pixels never exceed this, regardless of "
+                "upload size).",
+                int(max_image_pixels),
+            )
 
         # Dynamic int8 quantized layers expect float32 activations, so load fp32
         # (then quantize) instead of bf16 when quantizing.
@@ -441,7 +446,7 @@ class Scorer:
         return results
 
     @staticmethod
-    def _as_image(image: Any):
+    def _as_image(image: Any) -> Any:
         """Coerce a PIL image, raw bytes, or a filesystem path into a PIL image."""
         from PIL import Image
 
@@ -457,6 +462,36 @@ class Scorer:
             with open(image, "rb") as fh:
                 return decode_image(fh.read())
         raise TypeError(f"Unsupported image type {type(image).__name__}")
+
+    def _cap_image(self, image: Any) -> Any:
+        """Down-sample `image` so its total pixel count is at most
+        ``self.max_image_pixels``, preserving aspect ratio. Returns the input
+        unchanged when the cap is unset or the image already fits.
+
+        This runs **before** the model's processor sees the image, so the cap
+        applies uniformly across VLM families (Qwen-VL, Idefics3, SmolVLM,
+        LLaVA, InternVL, ...). Each family's own size kwarg (``max_pixels``,
+        ``size``, ``max_image_size``, ...) is independent and untouched.
+        """
+        cap = self.max_image_pixels
+        if cap is None:
+            return image
+        w, h = image.size
+        if w * h <= cap:
+            return image
+        from PIL import Image
+
+        scale = (cap / (w * h)) ** 0.5
+        new_w, new_h = max(1, int(w * scale)), max(1, int(h * scale))
+        # Floor-rounding both dims can push the product above the cap on very
+        # elongated images (e.g. 10000x1 with cap=4 -> 200x1 = 200 px). Shrink
+        # the longer side so the product actually fits.
+        if new_w * new_h > cap:
+            if new_w >= new_h:
+                new_w = max(1, cap // new_h)
+            else:
+                new_h = max(1, cap // new_w)
+        return image.resize((new_w, new_h), Image.Resampling.LANCZOS)
 
     def _apply_chat(self, messages: list[dict[str, Any]]) -> str:
         """Render `messages` through the chat template, assistant turn open.
@@ -536,7 +571,8 @@ class Scorer:
         """
         if image is None or self.processor is None or not self.multimodal:
             return len(self.tokenizer(prefix_text)["input_ids"])
-        _, prefix_len, _ = self._vision_prefix(prefix_text, self._as_image(image))
+        image = self._cap_image(self._as_image(image))
+        _, prefix_len, _ = self._vision_prefix(prefix_text, image)
         return prefix_len
 
     def _score_options_vision(
@@ -553,45 +589,118 @@ class Scorer:
                 "needs a vision-language checkpoint (e.g. Qwen/Qwen3-VL-4B-Instruct)."
             )
         image = self._as_image(image)
+        image = self._cap_image(image)
 
-        if use_kv_cache and self._vision_kv_cache_ok is not False:
-            try:
-                result = self._vision_cached(prefix_text, options, add_leading_space, image)
-            except Exception as exc:  # noqa: BLE001 - any failure => fall back
-                self._vision_kv_cache_ok = False
-                logger.warning(
-                    "KV cache unavailable for vision with %s (%s: %s); falling back "
-                    "to exact scoring.",
-                    type(self._model).__name__,
-                    type(exc).__name__,
-                    exc,
-                )
-            else:
-                if self._vision_kv_cache_ok is None:
-                    # First vision call this run: confirm the cached path agrees
-                    # with exact scoring before trusting it for the rest. A model
-                    # whose multimodal positions we mishandle (e.g. an M-RoPE
-                    # variant without `compute_3d_position_ids`) shows up here as
-                    # a large gap instead of silently wrong logprobs.
-                    exact = self._vision_exact(
+        torch = self.torch
+
+        def _is_oom(exc: BaseException) -> bool:
+            # CUDA: dedicated class (subclass of RuntimeError). Any message;
+            # no string match needed.
+            if isinstance(exc, torch.cuda.OutOfMemoryError):
+                return True
+            # Plain Python MemoryError can surface from ``torch.empty`` /
+            # tensor allocations on both CUDA and CPU when the allocator
+            # can't grow. It's the same condition as the CUDA class --
+            # treat it the same so the user sees the cap hint.
+            if isinstance(exc, MemoryError):
+                return True
+            # CPU: PyTorch's DefaultCPUAllocator raises a plain RuntimeError
+            # with the canonical prefix "DefaultCPUAllocator: can't allocate
+            # memory" (c10/core/Allocator.cpp, every release since ~1.6). No
+            # other code path in the runtime emits this exact phrase, so a
+            # substring match is safe and unambiguous.
+            return "DefaultCPUAllocator: can't allocate memory" in str(exc)
+
+        try:
+            if use_kv_cache and self._vision_kv_cache_ok is not False:
+                try:
+                    result = self._vision_cached(
                         prefix_text, options, add_leading_space, image
                     )
-                    delta = self._vision_cache_delta(result, exact)
-                    if delta > _VISION_CACHE_TOLERANCE_NATS:
-                        self._vision_kv_cache_ok = False
-                        logger.warning(
-                            "Vision KV cache disagreed with exact scoring for %s "
-                            "(max Δ%.3f nats > %.1f); using the exact path. This "
-                            "usually means the model's multimodal position handling "
-                            "is not supported.",
-                            type(self._model).__name__,
-                            delta,
-                            _VISION_CACHE_TOLERANCE_NATS,
-                        )
-                        return exact
-                self._vision_kv_cache_ok = True
-                return result
-        return self._vision_exact(prefix_text, options, add_leading_space, image)
+                except Exception as exc:
+                    if _is_oom(exc):
+                        # Propagate to the outer handler -- do NOT mark the cache
+                        # path as bad (exact scoring will hit the same OOM).
+                        raise
+                    self._vision_kv_cache_ok = False
+                    logger.warning(
+                        "KV cache unavailable for vision with %s (%s: %s); falling back "
+                        "to exact scoring.",
+                        type(self._model).__name__,
+                        type(exc).__name__,
+                        exc,
+                    )
+                else:
+                    if self._vision_kv_cache_ok is None:
+                        # First vision call this run: confirm the cached path agrees
+                        # with exact scoring before trusting it for the rest. A model
+                        # whose multimodal positions we mishandle (e.g. an M-RoPE
+                        # variant without `compute_3d_position_ids`) shows up here as
+                        # a large gap instead of silently wrong logprobs.
+                        try:
+                            exact = self._vision_exact(
+                                prefix_text, options, add_leading_space, image
+                            )
+                        except Exception as exc:
+                            if not _is_oom(exc):
+                                raise
+                            # The cached path already produced a good result
+                            # in hand; the exact (memory-hungry) pass is what
+                            # blew up. Return it, but leave the cache state
+                            # unset so a later call retries the comparison
+                            # once memory pressure eases -- marking it valid
+                            # here would trust the cached path forever without
+                            # ever checking it against exact scoring.
+                            logger.warning(
+                                "Vision KV cache validation OOM'd for %s "
+                                "(%s: %s); returning cached result and retrying "
+                                "validation on a later call.",
+                                type(self._model).__name__,
+                                type(exc).__name__,
+                                exc,
+                            )
+                            return result
+                        else:
+                            delta = self._vision_cache_delta(result, exact)
+                            if delta > _VISION_CACHE_TOLERANCE_NATS:
+                                self._vision_kv_cache_ok = False
+                                logger.warning(
+                                    "Vision KV cache disagreed with exact scoring for %s "
+                                    "(max Δ%.3f nats > %.1f); using the exact path. This "
+                                    "usually means the model's multimodal position handling "
+                                    "is not supported.",
+                                    type(self._model).__name__,
+                                    delta,
+                                    _VISION_CACHE_TOLERANCE_NATS,
+                                )
+                                return exact
+                    self._vision_kv_cache_ok = True
+                    return result
+            return self._vision_exact(prefix_text, options, add_leading_space, image)
+        except Exception as exc:
+            if not _is_oom(exc):
+                raise
+            on_cuda = self.device == "cuda"
+            if on_cuda:
+                torch.cuda.empty_cache()
+            cap = self.max_image_pixels
+            if cap is None:
+                hint = (
+                    "Either cap the image size by setting `max_image_pixels` in "
+                    "config.toml (e.g. `max_image_pixels = 401408` for ~512 vision "
+                    "tokens on Qwen-VL), or switch to a smaller model such as "
+                    "SmolVLM-500M-Instruct."
+                )
+            else:
+                hint = (
+                    f"Either lower `max_image_pixels` in config.toml (currently "
+                    f"{cap}), or switch to a smaller model such as "
+                    f"SmolVLM-500M-Instruct."
+                )
+            mem_kind = "GPU memory" if on_cuda else "memory"
+            raise RuntimeError(
+                f"Image scoring exhausted {mem_kind} ({exc}). {hint}"
+            ) from exc
 
     @staticmethod
     def _vision_cache_delta(
@@ -764,7 +873,7 @@ class Scorer:
         return results
 
 
-_SCORERS: dict[tuple[str, str | None, str, str, bool], Scorer] = {}
+_SCORERS: dict[tuple[str, str | None, str, str, bool, int | None], Scorer] = {}
 _LOCK = threading.Lock()
 _REGISTRY_LOCK = threading.Lock()
 
@@ -775,11 +884,19 @@ def get_scorer(
     device: str = "cpu",
     gpu: str | None = None,
     quantize: str = "auto",
+    max_image_pixels: int | None = None,
 ) -> Scorer:
     """Load (once) and cache a scorer per (model, save dir, resolved device, precision)."""
     resolved = resolve_device(device, gpu)
     dtype_name, quantized = resolve_precision(resolved, quantize)
-    key = (model_id, str(save_to) if save_to else None, resolved, dtype_name, quantized)
+    key = (
+        model_id,
+        str(save_to) if save_to else None,
+        resolved,
+        dtype_name,
+        quantized,
+        max_image_pixels,
+    )
     # `_LOCK` serializes (slow) construction so a model loads once.
     # `_REGISTRY_LOCK` guards only the dict structure, so is_loaded/loaded_scorer
     # stay responsive (and race-free) while a model is loading.
@@ -787,7 +904,13 @@ def get_scorer(
         with _REGISTRY_LOCK:
             scorer = _SCORERS.get(key)
         if scorer is None:
-            scorer = Scorer(model_id, save_to=save_to, device=resolved, quantize=quantize)
+            scorer = Scorer(
+                model_id,
+                save_to=save_to,
+                device=resolved,
+                quantize=quantize,
+                max_image_pixels=max_image_pixels,
+            )
             with _REGISTRY_LOCK:
                 _SCORERS[key] = scorer
         return scorer

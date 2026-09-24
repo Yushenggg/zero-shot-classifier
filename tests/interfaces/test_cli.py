@@ -150,6 +150,57 @@ def test_main_forwards_overrides_to_classify(monkeypatch, cli_files):
     assert captured["use_kv_cache"] is False
 
 
+def test_main_forwards_max_image_pixels_override(monkeypatch, cli_files):
+    captured = {}
+
+    def fake_classify(question, state, **kwargs):
+        captured.update(kwargs)
+        return [_classification()]
+
+    monkeypatch.setattr(cli, "classify", fake_classify)
+    cli.main(
+        [
+            "-q", cli_files["question"],
+            "-s", cli_files["state"],
+            "--config", cli_files["config"],
+            "--max-image-pixels", "401408",
+        ]
+    )
+    assert captured["max_image_pixels"] == 401408
+
+
+def test_main_uses_config_max_image_pixels_when_flag_omitted(monkeypatch, cli_files, tmp_path):
+    captured = {}
+
+    def fake_classify(question, state, **kwargs):
+        captured.update(kwargs)
+        return [_classification()]
+
+    monkeypatch.setattr(cli, "classify", fake_classify)
+    cfg = tmp_path / "cap.toml"
+    cfg.write_text('model = "test/model"\nmax_image_pixels = 802816\n')
+    cli.main(
+        [
+            "-q", cli_files["question"],
+            "-s", cli_files["state"],
+            "--config", str(cfg),
+        ]
+    )
+    assert captured["max_image_pixels"] == 802816
+
+
+def test_main_rejects_non_positive_max_image_pixels(cli_files):
+    with pytest.raises(SystemExit):
+        cli.main(
+            [
+                "-q", cli_files["question"],
+                "-s", cli_files["state"],
+                "--config", cli_files["config"],
+                "--max-image-pixels", "0",
+            ]
+        )
+
+
 def test_main_reports_classification_errors(monkeypatch, capsys, cli_files):
     def boom(*a, **k):
         raise ValueError("bad question")
