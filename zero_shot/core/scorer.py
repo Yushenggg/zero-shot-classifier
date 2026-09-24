@@ -646,18 +646,20 @@ class Scorer:
                                 raise
                             # The cached path already produced a good result
                             # in hand; the exact (memory-hungry) pass is what
-                            # blew up. Don't discard the cached answer just
-                            # because we couldn't validate it -- the cap
-                            # hint will still surface if the cache itself
-                            # OOMs on a later call.
+                            # blew up. Return it, but leave the cache state
+                            # unset so a later call retries the comparison
+                            # once memory pressure eases -- marking it valid
+                            # here would trust the cached path forever without
+                            # ever checking it against exact scoring.
                             logger.warning(
                                 "Vision KV cache validation OOM'd for %s "
-                                "(%s: %s); trusting cached result without "
-                                "comparison.",
+                                "(%s: %s); returning cached result and retrying "
+                                "validation on a later call.",
                                 type(self._model).__name__,
                                 type(exc).__name__,
                                 exc,
                             )
+                            return result
                         else:
                             delta = self._vision_cache_delta(result, exact)
                             if delta > _VISION_CACHE_TOLERANCE_NATS:

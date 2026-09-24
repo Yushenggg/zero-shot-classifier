@@ -644,7 +644,82 @@ def test_score_options_vision_validation_oom_returns_cached_result(monkeypatch):
 
     out = stub._score_options_vision("prompt", ["a", "b"], True, True, b"\x89PNG")
     assert out is cached_results
-    # Cached path succeeded, validation OOM'd -- trust the cache for next time.
+    # Validation OOM'd, so the cache was never compared: leave the state unset
+    # so a later call retries, instead of trusting it forever.
+    assert stub._vision_kv_cache_ok is None
+
+
+def test_score_options_vision_validation_oom_retries_on_later_call(monkeypatch):
+    """After a validation OOM, the next call retries the comparison.
+
+    The cached result is returned on the OOM call, but the cache must not be
+    marked valid without a successful comparison: the following call has to run
+    the exact pass again and only then trust the cache.
+    """
+    import torch
+
+    from zero_shot.core.models import SequenceScore
+    from zero_shot.core.scorer import Scorer
+
+    def _results():
+        return [
+            SequenceScore(
+                option=o,
+                continuation=o,
+                tokens=[],
+                eos_token="<e>",
+                eos_logprob=-0.1,
+                total_logprob=-0.1,
+            )
+            for o in ("a", "b")
+        ]
+
+    calls = {"exact": 0}
+
+    class _StubScorer:
+        multimodal = True
+        max_image_pixels = 401_408
+        _vision_kv_cache_ok = None
+        device = "cuda"
+        processor = type("P", (), {"image_processor": object()})()
+        _model = type("M", (), {"__name__": "StubVisionModel"})()
+        model_id = "acme/vision"
+
+        def __init__(self):
+            self.torch = torch
+
+        def _as_image(self, _image):
+            from PIL import Image
+
+            return Image.new("RGB", (8, 8), "red")
+
+        def _cap_image(self, image):
+            return image
+
+        def _vision_cached(self, *_a, **_k):
+            return _results()
+
+        def _vision_exact(self, *_a, **_k):
+            calls["exact"] += 1
+            if calls["exact"] == 1:
+                raise torch.cuda.OutOfMemoryError("oom in validation")
+            return _results()
+
+    stub = _StubScorer()
+    stub._score_options_vision = Scorer._score_options_vision.__get__(stub)
+    stub._vision_cache_delta = Scorer._vision_cache_delta
+    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: None, raising=False)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+
+    first = stub._score_options_vision("prompt", ["a", "b"], True, True, b"\x89PNG")
+    assert first is not None
+    assert calls["exact"] == 1
+    assert stub._vision_kv_cache_ok is None
+
+    # Second call: validation runs again, agrees, and the cache is trusted.
+    second = stub._score_options_vision("prompt", ["a", "b"], True, True, b"\x89PNG")
+    assert second is not None
+    assert calls["exact"] == 2
     assert stub._vision_kv_cache_ok is True
 
 
