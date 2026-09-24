@@ -677,7 +677,8 @@ class Scorer:
         except Exception as exc:
             if not _is_oom(exc):
                 raise
-            if torch.cuda.is_available():
+            on_cuda = self.device == "cuda"
+            if on_cuda:
                 torch.cuda.empty_cache()
             cap = self.max_image_pixels
             if cap is None:
@@ -693,7 +694,7 @@ class Scorer:
                     f"{cap}), or switch to a smaller model such as "
                     f"SmolVLM-500M-Instruct."
                 )
-            mem_kind = "GPU memory" if torch.cuda.is_available() else "memory"
+            mem_kind = "GPU memory" if on_cuda else "memory"
             raise RuntimeError(
                 f"Image scoring exhausted {mem_kind} ({exc}). {hint}"
             ) from exc

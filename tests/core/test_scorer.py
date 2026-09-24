@@ -326,6 +326,29 @@ def test_score_options_vision_cpu_oom_skips_cuda_empty_cache(monkeypatch):
     assert called == []
 
 
+def test_score_options_vision_cpu_oom_on_cuda_host_still_reports_cpu(monkeypatch):
+    """A CPU-device scorer on a CUDA host must still be handled as a CPU OOM.
+
+    Regression: the guard keyed off ``torch.cuda.is_available()`` instead of the
+    scorer's selected device, so a CUDA-capable host running ``device = "cpu"``
+    called ``torch.cuda.empty_cache()`` and labelled the failure "GPU memory".
+    """
+    import torch
+
+    boom = _make_cpu_oom_stub(monkeypatch, cap=401_408)
+    called = []
+    monkeypatch.setattr(torch.cuda, "empty_cache", lambda: called.append(True))
+    # CUDA is present on the host, but this scorer is on CPU.
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+
+    with pytest.raises(RuntimeError) as info:
+        boom._score_options_vision("prompt", ["a", "b"], True, True, b"\x89PNG")
+    msg = str(info.value)
+    assert "exhausted memory" in msg
+    assert "GPU memory" not in msg
+    assert called == []
+
+
 def test_score_options_vision_oom_bubbles_through_kv_cache_fallback(monkeypatch):
     """OOM from the KV-cache path must reach the outer guard, not be swallowed.
 
