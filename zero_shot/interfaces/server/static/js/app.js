@@ -97,7 +97,8 @@ async function checkHealth() {
     if (data.ok) {
       document.getElementById("modelId").textContent = data.model_id;
       dot.className = "dot ok";
-      const dev = data.device + (data.device !== "cpu" ? " / " + data.gpu : "");
+      const gpuLabel = data.gpu ? " / " + data.gpu : "";
+      const dev = data.device + (data.device !== "cpu" ? gpuLabel : "");
       let text = (data.model_loaded ? "model loaded" : "loading on first run") + " · " + dev;
       if (data.max_image_pixels) {
         const side = Math.round(Math.sqrt(data.max_image_pixels));
