@@ -66,19 +66,19 @@ def test_resolve_device_rejects_unknown_and_missing_cuda(monkeypatch):
         resolve_device("cuda", None)
 
 
-def test_resolve_device_validates_gpu_name(monkeypatch):
-    monkeypatch.setattr("torch.cuda.is_available", lambda: True)
-    monkeypatch.setattr("torch.cuda.get_device_name", lambda index=0: "NVIDIA GeForce RTX 5060 Ti")
-    assert resolve_device("gpu", "rtx_5060_ti") == "cuda"
-    with pytest.raises(ValueError):
-        resolve_device("gpu", "not-a-gpu")
+def test_resolve_device_gpu_accepts_any_label(monkeypatch):
+    """The gpu argument is a free-form label — no whitelist, no name check.
 
-
-def test_resolve_device_rejects_gpu_name_mismatch(monkeypatch):
+    The scorer used to validate gpu against a hardcoded SUPPORTED_GPUS
+    table and reject anything not in it. That blocked onboarding any new
+    GPU (each new model required a code change) and silently accepted the
+    bypass ``device = "auto"`` anyway. torch itself errors at model load
+    time if CUDA is incompatible, so the validation was redundant.
+    """
     monkeypatch.setattr("torch.cuda.is_available", lambda: True)
-    monkeypatch.setattr("torch.cuda.get_device_name", lambda index=0: "NVIDIA RTX A4000")
-    with pytest.raises(RuntimeError):
-        resolve_device("gpu", "rtx_5060_ti")
+    assert resolve_device("gpu", "anything-at-all") == "cuda"
+    assert resolve_device("gpu", "") == "cuda"
+    assert resolve_device("gpu", None) == "cuda"
 
 
 def test_resolve_model_dir_without_save_to():

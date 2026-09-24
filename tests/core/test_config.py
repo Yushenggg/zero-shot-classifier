@@ -22,7 +22,7 @@ def test_load_config_reads_values_and_resolves_paths(tmp_path):
 model = "acme/model"
 save_to = "models/acme"
 device = "cpu"
-gpu = "rtx_5060_ti"
+gpu = "test-gpu"
 quantize = "fp32"
 kv_cache = false
 temperature = 0.5

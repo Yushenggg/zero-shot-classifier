@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 DEFAULT_MODEL_ID = "Qwen/Qwen3-VL-4B-Instruct"
 DEFAULT_SAVE_TO: str | None = "models/qwen3-vl-4b-instruct"
 DEFAULT_DEVICE = "auto"
-DEFAULT_GPU = "rtx_5060_ti"
+DEFAULT_GPU = ""
 DEFAULT_QUANTIZE = "auto"
 QUANTIZE_MODES = ("auto", "bf16", "fp32", "int8")
 DEVICE_MODES = ("auto", "cpu", "gpu", "cuda")
@@ -23,17 +23,6 @@ _ENV_KEYS = {
     "gpu": "ZERO_SHOT_GPU",
     "quantize": "ZERO_SHOT_QUANTIZE",
     "max_image_pixels": "ZERO_SHOT_MAX_IMAGE_PIXELS",
-}
-
-# GPUs we know how to run on. Compute capability / CUDA are informational; the
-# name is checked against torch.cuda.get_device_name() when device = "gpu".
-SUPPORTED_GPUS: dict[str, dict[str, object]] = {
-    "rtx_5060_ti": {
-        "name": "NVIDIA GeForce RTX 5060 Ti",
-        "compute_capability": "12.0",
-        "cuda": "13.0",
-        "vram_gb": 16,
-    },
 }
 
 

@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from .config import DEFAULT_MODEL_ID, SUPPORTED_GPUS
+from .config import DEFAULT_MODEL_ID
 from .models import SequenceScore, TokenScore
 
 logger = logging.getLogger(__name__)
@@ -72,11 +72,11 @@ _MODEL_PATTERNS = ["*.json", "*.safetensors", "*.jinja"]
 
 
 def resolve_device(device: str = "cpu", gpu: str | None = None) -> str:
-    """Map the config device to a torch device string, validating the GPU.
+    """Map the config device to a torch device string.
 
     `device` is "auto" (use CUDA if available, else CPU), "cpu", or
-    "gpu"/"cuda". When GPU mode is requested, `gpu` names one of the supported
-    GPUs in `config.SUPPORTED_GPUS`.
+    "gpu"/"cuda". ``gpu`` is a free-form label (recorded for documentation
+    and surfaced on /api/health); it is not validated against any whitelist.
     """
     device = (device or "auto").strip().lower()
 
@@ -98,15 +98,6 @@ def resolve_device(device: str = "cpu", gpu: str | None = None) -> str:
             "run WITHOUT `uv run`/`uv sync` (which revert to the CPU wheel): use "
             "`.venv/bin/zero-shot-serve` or `uv run --no-sync ...`."
         )
-    actual = torch.cuda.get_device_name(0)
-    if gpu:
-        info = SUPPORTED_GPUS.get(gpu)
-        if info is None:
-            raise ValueError(f"Unknown gpu {gpu!r}. Supported: {sorted(SUPPORTED_GPUS)}.")
-        if str(info["name"]).lower() not in actual.lower():
-            raise RuntimeError(
-                f"config gpu = {gpu!r} expects {info['name']!r} but found {actual!r}."
-            )
     return "cuda"
 
 

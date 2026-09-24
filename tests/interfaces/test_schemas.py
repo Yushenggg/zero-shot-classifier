@@ -45,7 +45,7 @@ def test_health_response_allows_unknown_multimodal():
         ok=True,
         model_id="m",
         device="cpu",
-        gpu="rtx_5060_ti",
+        gpu="test-gpu",
         quantize="fp32",
         kv_cache=True,
         temperature=1.0,

@@ -51,7 +51,7 @@ Available keys:
 model = "Qwen/Qwen3-VL-4B-Instruct"      # any native-transformers VLM
 save_to = "models/qwen3-vl-4b-instruct"  # loaded from disk after first download
 device = "auto"                          # auto | cpu | gpu
-gpu = "rtx_5060_ti"                      # which GPU when device = "gpu"
+gpu = ""                                 # free-form label; just for documentation
 quantize = "auto"                        # auto | bf16 | fp32 | int8
 max_image_pixels = ""                    # omit / "" = model native; cap helps on small GPUs
 kv_cache = true                          # reuse one KV cache for the shared prompt
@@ -141,8 +141,9 @@ uv pip install --reinstall -r requirements-gpu.txt   # restore the CUDA build
 ```
 
 `device = "auto"` uses the GPU when available and falls back to CPU otherwise. Set
-`device = "gpu"` to require the GPU (validated against `gpu`, currently
-`rtx_5060_ti`), or `device = "cpu"` to force CPU.
+`device = "gpu"` to require the GPU, or `device = "cpu"` to force CPU. `gpu`
+is a free-form label (recorded for documentation and surfaced on `/api/health`),
+not validated against a whitelist.
 
 The `config.cpu.toml` preset forces `device = "cpu"` and uses
 **SmolVLM-500M-Instruct** with `quantize = "fp32"`: ~500M params, ~2 GB RAM,

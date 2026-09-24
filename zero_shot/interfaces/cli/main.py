@@ -120,7 +120,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--gpu",
         default=None,
-        help="GPU id (e.g. rtx_5060_ti) used to validate GPU mode. Overrides the config file.",
+        help="Free-form GPU label (recorded for documentation). Overrides the config file.",
     )
     parser.add_argument(
         "--quantize",

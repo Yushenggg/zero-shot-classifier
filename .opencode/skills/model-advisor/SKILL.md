@@ -172,7 +172,7 @@ Edit or create the relevant `config.toml`. The scorer reads:
 model = "<model_id>"
 save_to = "models/<short-name>"   # relative to project root
 device = "auto" | "cpu" | "gpu"
-gpu = "<gpu key from nvidia-smi>"  # e.g. "rtx_5060_ti"
+gpu = "<GPU label from nvidia-smi>"  # e.g. "NVIDIA GeForce RTX 5060 Ti" — free-form, just for documentation
 quantize = "auto" | "bf16" | "fp32" | "int8"
 max_image_pixels = ""   # omit / "" = model's native image budget
 kv_cache = true
