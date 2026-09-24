@@ -504,6 +504,42 @@ def test_cap_image_clamps_tall_elongated_input_to_fit_budget():
     assert out.size[1] == 4
 
 
+def test_count_input_tokens_caps_image_before_prefix():
+    """The vision token count must be computed on the capped image.
+
+    Regression: ``count_input_tokens`` bypassed ``_cap_image``, so the reported
+    usage reflected the original uncapped upload and the processor ran again at
+    full resolution, reintroducing the OOM the cap exists to prevent.
+    """
+    from PIL import Image
+
+    from zero_shot.core.scorer import Scorer
+
+    seen = {}
+
+    class _StubProcessor:
+        image_processor = object()
+
+    class _StubScorer:
+        multimodal = True
+        max_image_pixels = 100  # 10x10 px
+        processor = _StubProcessor()
+
+        def _as_image(self, _image):
+            return Image.new("RGB", (100, 100), "red")
+
+        def _vision_prefix(self, prefix_text, image):
+            seen["size"] = image.size
+            return prefix_text, image.size[0] * image.size[1], None
+
+    stub = _StubScorer()
+    stub._cap_image = Scorer._cap_image.__get__(stub)
+    stub.count_input_tokens = Scorer.count_input_tokens.__get__(stub)
+
+    assert stub.count_input_tokens("prompt", b"\x89PNG") == 100
+    assert seen["size"] == (10, 10)
+
+
 def test_cap_image_applies_when_score_options_vision_runs(monkeypatch):
     """End-to-end: an oversized image is downsampled before any scoring call.
 

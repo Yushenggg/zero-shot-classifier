@@ -571,7 +571,8 @@ class Scorer:
         """
         if image is None or self.processor is None or not self.multimodal:
             return len(self.tokenizer(prefix_text)["input_ids"])
-        _, prefix_len, _ = self._vision_prefix(prefix_text, self._as_image(image))
+        image = self._cap_image(self._as_image(image))
+        _, prefix_len, _ = self._vision_prefix(prefix_text, image)
         return prefix_len
 
     def _score_options_vision(
