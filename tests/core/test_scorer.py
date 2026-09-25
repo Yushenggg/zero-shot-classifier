@@ -11,6 +11,7 @@ from zero_shot.core.scorer import (
     resolve_device,
     resolve_model_dir,
     resolve_precision,
+    unload,
 )
 
 
@@ -158,6 +159,50 @@ def test_get_scorer_distinguishes_image_pixel_cap(monkeypatch, clean_scorer_regi
     get_scorer("acme/model", device="cpu")
     get_scorer("acme/model", device="cpu", max_image_pixels=401408)
     assert _DummyScorer.instances == 2
+
+
+def test_unload_evicts_one_model(monkeypatch, clean_scorer_registry):
+    import zero_shot.core.scorer as scorer_module
+
+    _DummyScorer.instances = 0
+    monkeypatch.setattr(scorer_module, "Scorer", _DummyScorer)
+    monkeypatch.setattr(scorer_module, "resolve_device", lambda device, gpu: "cpu")
+    monkeypatch.setattr(
+        scorer_module, "resolve_precision", lambda device, quantize: ("float32", False)
+    )
+
+    get_scorer("a/model", device="cpu")
+    get_scorer("b/model", device="cpu")
+    unload("a/model")
+    assert is_loaded("a/model") is False
+    assert is_loaded("b/model") is True
+
+
+def test_unload_all_and_reload(monkeypatch, clean_scorer_registry):
+    import zero_shot.core.scorer as scorer_module
+
+    _DummyScorer.instances = 0
+    monkeypatch.setattr(scorer_module, "Scorer", _DummyScorer)
+    monkeypatch.setattr(scorer_module, "resolve_device", lambda device, gpu: "cpu")
+    monkeypatch.setattr(
+        scorer_module, "resolve_precision", lambda device, quantize: ("float32", False)
+    )
+
+    first = get_scorer("a/model", device="cpu")
+    unload()
+    assert is_loaded() is False
+    assert loaded_scorer("a/model") is None
+
+    # A later get_scorer reloads from scratch rather than returning the evicted one.
+    second = get_scorer("a/model", device="cpu")
+    assert second is not first
+    assert _DummyScorer.instances == 2
+
+
+def test_unload_noop_when_empty(clean_scorer_registry):
+    unload()
+    assert is_loaded() is False
+
 
 
 def _make_vision_oom_stub(monkeypatch, cap, *, cuda_available=True):

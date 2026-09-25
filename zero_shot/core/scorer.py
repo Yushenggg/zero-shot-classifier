@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import logging
 import os
 import threading
@@ -932,3 +933,34 @@ def loaded_scorer(model_id: str | None = None) -> Scorer | None:
         if model_id is None:
             return next(iter(_SCORERS.values()), None)
         return next((s for key, s in _SCORERS.items() if key[0] == model_id), None)
+
+
+def unload(model_id: str | None = None) -> None:
+    """Evict cached scorer(s) and release the memory they hold.
+
+    A loaded model (and its KV cache) lives in the module-level registry for the
+    life of the process, so it survives even after the last request finishes.
+    Call this to drop it: the weights are freed, the CUDA caching allocator is
+    emptied, and a later ``get_scorer`` reloads from disk. Passing ``model_id``
+    evicts just that model; ``None`` evicts everything.
+    """
+    with _LOCK:
+        with _REGISTRY_LOCK:
+            if model_id is None:
+                removed = list(_SCORERS.values())
+                _SCORERS.clear()
+            else:
+                keys = [key for key in _SCORERS if key[0] == model_id]
+                removed = [_SCORERS.pop(key) for key in keys]
+    if not removed:
+        return
+    torch = getattr(removed[0], "torch", None)
+    del removed
+    gc.collect()
+    if torch is None:
+        return
+    try:
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:  # noqa: BLE001 - CUDA may be absent or misconfigured
+        pass

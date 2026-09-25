@@ -18,6 +18,7 @@ from .core import (
     is_loaded,
     load_config,
     loaded_scorer,
+    unload,
 )
 
 __all__ = [
@@ -34,4 +35,5 @@ __all__ = [
     "get_scorer",
     "is_loaded",
     "loaded_scorer",
+    "unload",
 ]

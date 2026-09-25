@@ -187,6 +187,43 @@ laptop with no GPU, where a large GPU profile would be slow or OOM. The
 server preloads the configured model at startup and logs the device, so
 you can confirm whether it is running on CPU or GPU.
 
+### Benchmarking
+
+`zero-shot-bench` scores a labelled CSV against a question set, loads the model
+**once**, then unloads it:
+
+```bash
+.venv/bin/zero-shot-bench -d data.csv -q examples/color_question.json -o results/
+```
+
+The CSV needs one labelled row per example. By default it reads a `text` column
+for the state and a `label` column for the gold answer; both are configurable,
+and the loader adapts to the column layouts HF datasets are dumped to:
+
+```bash
+# sst2-style: `sentence` + `label`
+zero-shot-bench -d sst2.csv -q topic.json --text-column sentence
+
+# multi-field text (dbpedia-style): join `title` and `content`
+zero-shot-bench -d dbpedia.csv -q topic.json \
+  --text-column title --text-column content
+
+# image classification (cifar-style `img` column) on a VLM
+zero-shot-bench -d cifar.csv -q color.json --image-column img --data-dir images/
+
+# integer/letter labels -> option keys
+zero-shot-bench -d ag_news.csv -q topic.json --label-map 2=Business --label-map 3=Sci/Tech
+```
+
+A single question uses the shared `--label-column`; with several questions each
+needs a CSV column named after it (or the run is rejected, never silently
+skipped). `--state-key input` wraps the text as `{"input": ...}` to match the
+other interfaces. The run writes `predictions.csv` (per-row predictions) and
+`summary.json` (model, settings, timing, and per-question metrics — accuracy +
+macro-F1 + confusion for `choice`/`noul`, MAE/RMSE/exact-match for `score`).
+Model/device/precision flags mirror the `zero-shot` CLI; `--limit N` evaluates
+just the first N rows.
+
 ### HTTP API
 
 `POST /v1/classify/text` (also available at the TypeSafe-compatible

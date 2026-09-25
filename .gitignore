@@ -17,3 +17,9 @@ models/
 
 # Local config (use config.toml.example as the template)
 config.toml
+
+# Benchmark outputs (predictions.csv + summary.json)
+benchmark/results/
+
+# Prepared benchmark datasets (images + CSV)
+benchmark/data/

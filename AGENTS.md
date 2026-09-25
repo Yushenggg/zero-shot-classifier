@@ -8,6 +8,7 @@ Vision-language is the default; text and image requests share one scoring path.
 - `zero_shot/core/` — interface-independent logic (`classifier.py`, `scorer.py`, `config.py`, `models.py`, `image_utils.py`)
 - `zero_shot/interfaces/cli/` — `zero-shot` command
 - `zero_shot/interfaces/server/` — `zero-shot-serve` command, FastAPI app (`app.py`), HTTP schemas (`schemas.py`), `static/` UI
+- `benchmark/` — `zero-shot-bench` command: scores a labelled CSV with one model load/unload, writes per-row predictions + metrics (`run.py`, `data.py`, `metrics.py`)
 - `config.toml.example` — blank template (tracked); copy to `config.toml`
 - `config.toml` — your machine profile (gitignored, per-host)
 - `config.cpu.toml` — CPU preset (SmolVLM-500M-Instruct, ships ready-to-run)
@@ -22,7 +23,8 @@ Vision-language is the default; text and image requests share one scoring path.
 - `.venv/bin/zero-shot-serve --cpu-low` — serve the CPU preset
 - `.venv/bin/zero-shot-serve --config <path>` — serve an arbitrary config
 - `.venv/bin/zero-shot -q <questions.json> -s <state.json> [-i <image>]` — classify from the CLI
-- `.venv/bin/python -m pytest` — run the regression suite (`tests/core`, `tests/interfaces`); no model is loaded
+- `.venv/bin/zero-shot-bench -d <data.csv> -q <questions.json> [-o <out-dir>]` — benchmark a labelled CSV (loads the model once, then unloads); `--text-column`/`--label-column`/`--image-column` adapt to HF-style CSVs, `--label-map` rewrites integer/letter labels
+- `.venv/bin/python -m pytest` — run the regression suite (`tests/core`, `tests/interfaces`, `tests/benchmark`); no model is loaded
 - `uvx ruff@0.16.8 check` — lint the tree (config in `pyproject.toml`; CI pins the same version and runs on PRs and pushes to `main`)
 
 ## Conventions
@@ -35,10 +37,11 @@ Vision-language is the default; text and image requests share one scoring path.
 
 ## Tests
 `.venv/bin/python -m pytest` runs the regression suite in `tests/` (mirrors the
-package: `tests/core`, `tests/interfaces`). A `FakeScorer` replaces the real
-model, so the suite is deterministic, offline, and fast — it covers prompt
-building, calibration/softmax, config + pydantic validation, the scorer cache,
-image utils, the CLI, and the HTTP API via `TestClient`.
+package: `tests/core`, `tests/interfaces`, `tests/benchmark`). A `FakeScorer`
+replaces the real model, so the suite is deterministic, offline, and fast — it
+covers prompt building, calibration/softmax, config + pydantic validation, the
+scorer cache, image utils, the CLI, the benchmark harness, and the HTTP API via
+`TestClient`.
 
 For a real end-to-end check, start the server and poll `/api/health` for
 `model_loaded: true` (60–120 s), dumping the last 30 lines of the uvicorn log on

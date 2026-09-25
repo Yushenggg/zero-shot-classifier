@@ -20,7 +20,7 @@ from .models import (
     parse_question,
     parse_questions,
 )
-from .scorer import Scorer, get_scorer, is_loaded, loaded_scorer
+from .scorer import Scorer, get_scorer, is_loaded, loaded_scorer, unload
 
 __all__ = [
     "SUPPORTED_TYPES",
@@ -42,4 +42,5 @@ __all__ = [
     "loaded_scorer",
     "parse_question",
     "parse_questions",
+    "unload",
 ]
