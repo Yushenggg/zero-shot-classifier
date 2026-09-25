@@ -39,7 +39,7 @@ if [[ -n "${EXTRA_ARGS:-}" ]]; then
     read -r -a EXTRA <<< "${EXTRA_ARGS}"
 fi
 
-for name in mnist fashion_mnist kmnist usps; do
+for name in mnist fashion_mnist kmnist usps eurosat; do
     data="$DATA_DIR/$name/data.csv"
     questions="$DATA_DIR/$name/q.json"
     if [[ ! -f "$data" || ! -f "$questions" ]]; then
@@ -62,6 +62,6 @@ done
 
 echo
 echo "Done. Per-dataset results:"
-for name in mnist fashion_mnist kmnist usps; do
+for name in mnist fashion_mnist kmnist usps eurosat; do
     echo "  $DATA_DIR/$name/$OUT_SUFFIX/{predictions.csv,summary.json}"
 done

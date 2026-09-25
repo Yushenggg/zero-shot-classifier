@@ -6,13 +6,13 @@
 <title>zero-shot benchmark report</title>
 <style>
   :root{
-    --bg:#f6f8fa; --card:#fff; --ink:#1f2328; --muted:#656d76;
-    --border:#d8dee4; --accent:#0969da; --good:#1a7f37; --mid:#9a6700; --bad:#cf222e;
+    --bg:#1b1b1d; --card:#232326; --panel-2:#2c2c30; --ink:#e6e6e8; --muted:#9a9aa2;
+    --border:#3a3a3f; --accent:#8ab4f8; --good:#7ee787; --mid:#e3b341; --bad:#ff7b72;
   }
   *{box-sizing:border-box}
   body{margin:0;background:var(--bg);color:var(--ink);
-    font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
-  header{background:#fff;border-bottom:1px solid var(--border);padding:22px 32px}
+    font:15px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+  header{background:var(--card);border-bottom:1px solid var(--border);padding:28px 32px}
   header h1{margin:0 0 4px;font-size:22px}
   header p{margin:0;color:var(--muted);font-size:13px}
   main{max-width:1250px;margin:0 auto;padding:24px 20px 64px}
@@ -27,9 +27,9 @@
   table{border-collapse:collapse;width:100%;background:var(--card);border:1px solid var(--border);border-radius:10px;overflow:hidden}
   th,td{padding:8px 10px;text-align:right;border-bottom:1px solid var(--border);font-variant-numeric:tabular-nums}
   th:first-child,td:first-child{text-align:left}
-  thead th{background:#f6f8fa;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
+  thead th{background:var(--panel-2);font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em}
   tbody tr:last-child td{border-bottom:none}
-  tbody tr:hover{background:#f6f8fa}
+  tbody tr:hover{background:var(--panel-2)}
   td.pos{color:var(--good);font-weight:600}
   td.neg{color:var(--bad);font-weight:600}
   .dataset{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-top:18px}
@@ -38,21 +38,21 @@
   .bars{display:grid;gap:6px;margin:10px 0 4px}
   .bar-row{display:grid;grid-template-columns:170px 1fr 130px;align-items:center;gap:10px}
   .bar-label{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  .bar-track{background:#eaeef2;border-radius:6px;height:14px;overflow:hidden}
+  .bar-track{background:var(--panel-2);border-radius:6px;height:14px;overflow:hidden}
   .bar-fill{height:100%;border-radius:6px}
   .bar-fill.good{background:var(--good)} .bar-fill.mid{background:var(--mid)} .bar-fill.bad{background:var(--bad)}
   .bar-val{font-size:12px;text-align:right;font-variant-numeric:tabular-nums}
   .muted{color:var(--muted)}
   .heatmap-wrap{overflow-x:auto;margin-top:8px}
   table.heatmap{width:auto;min-width:0;border-radius:8px}
-  table.heatmap th,table.heatmap td{padding:5px 8px;text-align:center;font-size:12px;border:1px solid #fff}
+  table.heatmap th,table.heatmap td{padding:5px 8px;text-align:center;font-size:12px;border:1px solid var(--bg)}
   table.heatmap thead th{color:var(--muted)}
-  table.heatmap th.corner{background:#f6f8fa;font-size:11px;text-align:left}
-  table.heatmap th.total{background:#f6f8fa;color:var(--muted)}
+  table.heatmap th.corner{background:var(--panel-2);font-size:11px;text-align:left}
+  table.heatmap th.total{background:var(--panel-2);color:var(--muted)}
   table.heatmap td{min-width:34px}
   .confusions{margin:8px 0 0;padding-left:0;list-style:none;display:flex;flex-wrap:wrap;gap:6px}
-  .confusions li{background:#f6f8fa;border:1px solid var(--border);border-radius:999px;padding:3px 10px;font-size:12px}
-  .pill{display:inline-block;min-width:18px;text-align:center;border-radius:999px;color:#fff;font-size:11px;padding:1px 6px;margin-right:4px}
+  .confusions li{background:var(--panel-2);border:1px solid var(--border);border-radius:999px;padding:3px 10px;font-size:12px}
+  .pill{display:inline-block;min-width:18px;text-align:center;border-radius:999px;color:#1b1b1d;font-size:11px;padding:1px 6px;margin-right:4px;font-weight:600}
   .pill.bad{background:var(--bad)}
   .run-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(430px,1fr));gap:18px;margin-top:6px}
   .run-col{min-width:0}
@@ -192,8 +192,8 @@ function heatmapHTML(metric, names) {
       const count = row[pred] || 0;
       const frac = total ? count / total : 0;
       const diag = pred === gold;
-      const alpha = (diag ? 0.10 + 0.75 * frac : 0.06 + 0.75 * frac).toFixed(3);
-      const color = diag ? "rgba(26,127,55," + alpha + ")" : "rgba(207,34,46," + alpha + ")";
+      const alpha = (diag ? 0.08 + 0.42 * frac : 0.05 + 0.42 * frac).toFixed(3);
+      const color = diag ? "rgba(126,231,135," + alpha + ")" : "rgba(255,123,114," + alpha + ")";
       const tip = "gold " + (names[gold] || gold) + " → pred " +
         (names[pred] || pred) + ": " + count;
       return '<td style="background:' + color + '" title="' + esc(tip) + '">' +
